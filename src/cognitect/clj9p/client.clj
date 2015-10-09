@@ -265,8 +265,21 @@
         fid (path-fid client full-path)]
      (resolving-blocking-call client mount-path (io/fcall {:type :tstat :fid fid}))))
 
-(defn ls [client full-path]
-  (let [walked (walk client full-path)
+(defn edn-read-fn [x]
+  (edn/read-string (if (string? x)
+                     x
+                     (some-> x (String. "UTF-8")))))
+
+(defn binstat-read-fn [x]
+  (when x
+    (let [buffer (io/default-buffer x)]
+      (io/read-stats buffer false false))))
+
+(defn ls
+  ([client full-path]
+   (ls client full-path binstat-read-fn))
+  ([client full-path dir-read-fn]
+   (let [walked (walk client full-path)
         qid (path-qid client full-path)]
     (if (= proto/QTDIR (:type qid))
       (let [read-data (full-read client full-path 0 0)]
@@ -277,13 +290,10 @@
                                 result
                                 (assoc result (:name e) e)))
                             {}
-                            (flatten (map #(edn/read-string (if (string? %)
-                                                              %
-                                                              (some-> % (String. "UTF-8"))))
-                                          read-data)))))
+                            (flatten (map dir-read-fn read-data)))))
              (catch Throwable t read-data)))
       (and (path-qid client full-path)
-           (last (string/split full-path #"/"))))))
+           (last (string/split full-path #"/")))))))
 
 (defn touch
   ([client full-path]
