@@ -29,8 +29,10 @@
 (defn default-buffer
   "This creates a Buffer suitable for use with encoding/decoding fcalls,
   but one should prefer using PooledByteBufAllocator from Netty (with direct Buffers only)"
-  []
+  ([]
   (.directBuffer PooledByteBufAllocator/DEFAULT))
+  ([initial-byte-array]
+   (buff/write-byte-array (.directBuffer PooledByteBufAllocator/DEFAULT) initial-byte-array)))
 
 (extend-protocol buff/Length
 
@@ -40,7 +42,10 @@
 
   String
   (length [t]
-    (.length t)))
+    (.length t))
+
+  nil
+  (length [t] 0))
 
 (extend-protocol buff/Buffer
 
@@ -186,13 +191,15 @@
         (write-len-string buffer (:extension stat))
         (buff/write-int buffer (:uidnum stat))
         (buff/write-int buffer (:gidnum stat))
-        (buff/write-int buffer (:muidnum stat))))))
+        (buff/write-int buffer (:muidnum stat))))
+    buffer))
 
 (defn read-stats [^Buffer buffer decode-length? dot-u?]
   (when decode-length?
     (buff/read-short buffer))
-  (loop [stats (transient [])]
-    (if (pos? ^long (buff/readable-bytes buffer))
+  (loop [stats (transient [])
+         initial-bytes ^long (buff/readable-bytes buffer)]
+    (if (pos? initial-bytes)
       (let [statsz (buff/read-short buffer)
             stype (buff/read-short buffer)
             dev (buff/read-int buffer)
@@ -205,6 +212,10 @@
             uid (read-len-string buffer)
             gid (read-len-string buffer)
             muid (read-len-string buffer)
+            ;;(if (or dot-u?
+            ;;                  (> statsz (- initial-bytes (buff/readable-bytes buffer)))
+            ;;           (read-len-string buffer)
+            ;;           ""))
             extension (if dot-u? (read-len-string buffer) "")
             uidnum (if dot-u? (buff/read-int buffer) 0)
             gidnum (if dot-u? (buff/read-int buffer) 0)
@@ -225,7 +236,8 @@
                                      {:extension extension
                                       :uidnum uidnum
                                       :gidnum gidnum
-                                      :muidnum muidnum})))))
+                                      :muidnum muidnum})))
+               ^long (buff/readable-bytes buffer)))
       (persistent! stats))))
 
 (defn ensure!
