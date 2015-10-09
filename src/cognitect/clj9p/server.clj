@@ -1,4 +1,4 @@
-(ns ndensity.distributed.9p.server
+(ns cognitect.clj9p.server
   (:require [clojure.core.async :as async]
             [clojure.string :as string]
             [cognitect.clj9p.9p :as n9p]
@@ -409,14 +409,25 @@
           (make-resp {:type :rwalk
                       :wqid wqid})))))
 
-(defn dirreader
+(defn clj-dirreader
   [ctx qid]
   (if-let [child-qids (and (= (:type qid) proto/QTDIR)
                            (qid-children-qids (get-in ctx [:server-state :fs]) qid))]
-    ;; TODO: replace `pr-str` with transit
     (let [stat-str (pr-str (mapv #(fake-stat ctx %) child-qids))]
       (make-resp ctx {:type :rread
-                    :data stat-str}))
+                      :data stat-str}))
+    ;; Otherwise, return no data
+    (make-resp ctx {:type :rread
+                    :data ""})))
+
+(defn interop-dirreader
+  [ctx qid]
+  (if-let [child-qids (and (= (:type qid) proto/QTDIR)
+                           (qid-children-qids (get-in ctx [:server-state :fs]) qid))]
+    (let [buffer (io/default-buffer)
+          stat-buffer (io/write-stats buffer (mapv #(fake-stat ctx %) child-qids) false)]
+      (make-resp ctx {:type :rread
+                      :data stat-buffer}))
     ;; Otherwise, return no data
     (make-resp ctx {:type :rread
                     :data ""})))
