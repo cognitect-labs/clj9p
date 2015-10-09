@@ -197,6 +197,24 @@
     (force-walk client full-path)
     client))
 
+(defn base-open [client mount-path fid mode]
+  (resolving-blocking-call client mount-path (io/fcall {:type :topen :fid fid :mode mode})))
+
+(defn open
+  ([client full-path]
+   (open client full-path proto/OREAD))
+  ([client full-path mode]
+   (let [walked (walk client full-path)
+         mount-path (find-mount-path client full-path) ;; We know it's good because the walk passed
+         fid (path-fid client full-path)
+         resp (base-open client mount-path fid mode)]
+     (if (= (:type resp) :rerror)
+       (throw (ex-info "Failed client open" {:client client
+                                             :path full-path
+                                             :mode mode
+                                             :error-response resp}))
+       resp))))
+
 (defn full-read
   ([client full-path]
    (full-read client full-path 0 0))
@@ -279,7 +297,9 @@
   ([client full-path]
    (ls client full-path binstat-read-fn))
   ([client full-path dir-read-fn]
-   (let [walked (walk client full-path)
+   (let [opened-qid (try (open client full-path)
+                         (catch Throwable t ;; this may throw if it's already been opened
+                           {}))
         qid (path-qid client full-path)]
     (if (= proto/QTDIR (:type qid))
       (let [read-data (full-read client full-path 0 0)]
