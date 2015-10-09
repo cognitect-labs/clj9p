@@ -482,8 +482,8 @@
     (netty/stop serv-map)
     serv-map))
 
-(defn tcp-server
-  ([server-options server-map-9p]
+(defn netty-server
+  ([channel-class server-options server-map-9p]
    ;; Start the Netty-specific output go-loop
    (async/go-loop [write-count 0]
      (if-let [output-fcall (async/<! (:server-out server-map-9p))]
@@ -497,8 +497,8 @@
            (recur (inc write-count))))
        (async/close! (:server-in server-map-9p))))
    ;; Build the Netty-based TCP server, and tie it 9p core.async server
-   (merge (netty/server server-options
-                        netty/tcp-channel-class
+   (merge (netty/server channel-class
+                        server-options
                         [{:channel-registered (fn [^ChannelHandlerContext ctx]
                                                 (let [ch ^Channel (.channel ctx)
                                                       pipeline ^ChannelPipeline (.pipeline ch)]
@@ -519,7 +519,9 @@
                                               (.. ctx (channel) (parent) (close)))))}])
           server-map-9p)))
 
-
+(def tcp-server   (partial netty-server netty/tcp-channel-class))
+(def sctp-server  (partial netty-server netty/sctp-channel-class))
+(def local-server (partial netty-server netty/local-channel-class))
 
 (comment
 
@@ -559,7 +561,7 @@
   (async/>!! (:server-in serv) (io/fcall {:type :twalk :fid 3 :newfid 5 :wname ["no-db"]})) ;; Not found
   (async/>!! (:server-in serv) (io/fcall {:type :twalk :fid 1 :newfid 3 :wname ["net"]})) ;; Dup newfid
   (async/>!! (:server-in serv) (io/fcall {:type :twalk :fid 1 :newfid 5 :wname ["databases" "some-db"]}))
-  (async/>!! (:server-in serv) (io/fcall {:type :tstat :fid 5}))
+  (async/>!! (:server-in serv) (io/fcall {:type :tstat :fid 4}))
   (async/>!! (:server-in serv) (io/fcall {:type :tread :fid 5 :offset 0 :count 0}))
   (async/>!! (:server-in serv) (io/fcall {:type :tread :fid 3 :offset 0 :count 0}))
   (async/<!! (:server-out serv))
@@ -577,4 +579,3 @@
   (-> serv :state deref :client-fids)
 
   )
-

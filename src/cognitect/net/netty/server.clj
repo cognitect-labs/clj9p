@@ -3,69 +3,73 @@
   (:import (java.net SocketAddress)
            (io.netty.channel Channel
                              ChannelFuture
-                             ChannelOption)
+                             ChannelOption
+                             EventLoopGroup)
            (io.netty.channel.nio NioEventLoopGroup)
            (io.netty.bootstrap ServerBootstrap)
            (io.netty.buffer PooledByteBufAllocator)))
 
 ;; Common Channel Classes
-(def local-channel-class (try
-                           (and (import '(io.netty.channel.local LocalServerChannel))
-                                io.netty.channel.local.LocalServerChannel)
-                         (catch Throwable t
-                           nil)))
-(def tcp-channel-class (try
-                         (and (import '(io.netty.channel.socket.nio NioServerSocketChannel))
-                              io.netty.channel.socket.nio.NioServerSocketChannel)
-                         (catch Throwable t
-                           nil)))
-(def sctp-channel-class (try
-                         (and (import '(io.netty.channel.sctp.nio NioSctpServerChannel))
-                              io.netty.channel.sctp.nio.NioSctpServerChannel)
-                         (catch Throwable t
-                           nil)))
+(def local-channel-class (util/maybe-class 'io.netty.channel.local.LocalServerChannel))
+(def tcp-channel-class   (util/maybe-class 'io.netty.channel.socket.nio.NioServerSocketChannel))
+(def sctp-channel-class  (util/maybe-class 'io.netty.channel.sctp.nio.NioSctpServerChannel))
 
-(defn server [base-map channel-class handlers]
-  (let [boss-group ^EventLoopGroup (NioEventLoopGroup. 1)
-        worker-group ^EventLoopGroup (NioEventLoopGroup.)
-        bstrap ^ServerBootstrap (ServerBootstrap.)
-        chan-init (util/init-pipeline-handler handlers)
-        cleanup-fn (fn [m]
-                     (.shutdownGracefully boss-group)
-                     (.shutdownGracefully worker-group))]
-    (assert (some? channel-class) "Missing a valid Channel Class, cannot be nil")
-    (doto bstrap
-      (.group boss-group worker-group)
-      (.channel channel-class)
-      (.option ChannelOption/SO_BACKLOG (int (:backlog base-map 100)))
-      (.option ChannelOption/SO_REUSEADDR (:reuseadder base-map true))
-      (.childOption ChannelOption/ALLOCATOR PooledByteBufAllocator/DEFAULT)
-      (.childHandler chan-init))
-    (merge base-map
-           {:bootstrap bstrap
-            :cleanup cleanup-fn
-            :stop-fn (fn [m]
-                       (when-let [channel ^Channel (:channel m)]
-                         (.close channel)
-                         m))
-            :bind (fn [m]
-                    (let [{:keys [bootstrap port host]
-                           :or {bootstrap bstrap
-                                port (:port base-map)}} m
-                          ^ChannelFuture fut (if host
-                                               (.sync (.bind bootstrap ^String host (int port)))
-                                               (.sync (.bind bootstrap (int port))))]
-                      (.channel fut)))})))
+(defn- channel-class? [cls]
+  (and (class? cls) (some #{Channel} (supers cls))))
 
-(def start #(util/start :bind %))
-(def stop util/stop)
+(defn- event-loop-group
+  ([]         (NioEventLoopGroup.))
+  ([nthreads] (NioEventLoopGroup. nthreads)))
+
+(defn- configure-netty-bootstrap
+  [^EventLoopGroup boss-group ^EventLoopGroup worker-group channel-class backlog reuseaddr chan-init]
+  (doto (ServerBootstrap.)
+    (.group boss-group worker-group)
+    (.channel channel-class)
+    (.option ChannelOption/SO_BACKLOG backlog)
+    (.option ChannelOption/SO_REUSEADDR reuseaddr)
+    (.childOption ChannelOption/ALLOCATOR PooledByteBufAllocator/DEFAULT)
+    (.childHandler chan-init)))
+
+(defn- cleanup-handler [& groups]
+  (fn [_]
+    (doseq [g groups]
+      (.shutdownGracefully ^EventLoopGroup g))))
+
+(defn- handle-stop [{:keys [channel] :as server-context}]
+  (when channel
+    (.close ^Channel channel))
+  server-context)
+
+(defn- handle-bind [{:keys [bootstrap port host] :as server-context}]
+  (let [fut (if host
+              (.bind ^ServerBootstrap bootstrap ^String host (int port))
+              (.bind ^ServerBootstrap bootstrap (int port)))]
+    (.channel ^ChannelFuture (.sync fut))))
+
+(defn server [channel-class base-map handlers]
+  (assert (channel-class? channel-class) "Missing a valid Channel class, cannot be nil")
+  (let [boss-group   (event-loop-group 1)
+        worker-group (event-loop-group)
+        chan-init    (util/init-pipeline-handler handlers)
+        backlog      (int (:backlog base-map 100))
+        reuseaddr?   (:reuseaddr base-map true)
+        bstrap       (configure-netty-bootstrap boss-group worker-group channel-class backlog reuseaddr? chan-init)]
+    (assoc base-map
+           :bootstrap bstrap
+           :cleanup   (cleanup-handler boss-group worker-group)
+           :stop-fn   handle-stop
+           :bind      handle-bind)))
+
+(def start    #(util/start :bind %))
+(def stop     util/stop)
 (def shutdown util/shutdown)
 
 
 (comment
 
-  (def echo-serv (server {:port 8888 :join? false}
-                         tcp-channel-class
+  (def echo-serv (server tcp-channel-class
+                         {:port 8888 :join? false}
                          [{:channel-read (fn [ctx msg]
                                            (println "Server got: " msg)
                                            (.write ctx msg))
@@ -74,4 +78,3 @@
   (start echo-serv)
 
   )
-

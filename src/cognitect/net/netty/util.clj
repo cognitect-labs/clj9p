@@ -7,6 +7,13 @@
                              ChannelPromise
                              ChannelFuture)))
 
+(defn maybe-class
+  [classname]
+  (try
+    (eval `(import ~classname))
+    (catch Throwable t
+      nil)))
+
 ;; This is basically like `ChannelHandlerAdapter`, but let's us control it (and use reify instead of proxy)
 ;; Also recognizes channel initializers
 (defn ->handler [m]
@@ -99,7 +106,7 @@
                                 (.addLast pipeline handler-array)))}))
 
 (defn start [start-key netty-map]
-  (when-let [channel ^Channel (and (netty-map start-key)
+  (when-let [^Channel channel (and (netty-map start-key)
                                    ((netty-map start-key) netty-map))]
     (if (:join? netty-map)
       (try
@@ -117,4 +124,3 @@
   (some-> (stop netty-map)
           :cleanup
           (apply [netty-map])))
-
