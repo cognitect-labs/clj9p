@@ -29,3 +29,6 @@
   (ensure-little-endian [t])
   (clear [t]))
 
+(defprotocol Length
+  (length [t])) ;; A protocol form of `count` that we can easily extend
+
