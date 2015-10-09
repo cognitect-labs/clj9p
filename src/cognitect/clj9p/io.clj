@@ -32,6 +32,16 @@
   []
   (.directBuffer PooledByteBufAllocator/DEFAULT))
 
+(extend-protocol buff/Length
+
+  ByteBuf
+  (length [t]
+    (.writerIndex t))
+
+  String
+  (length [t]
+    (.length t)))
+
 (extend-protocol buff/Buffer
 
   ByteBuf
@@ -122,7 +132,7 @@
 ;; All strings are always UTF-8 (originally designed for Plan 9 and the 9P protocol).
 
 (defn write-2-piece [^Buffer buffer x]
-  (buff/write-short buffer (count x))
+  (buff/write-short buffer (buff/length x))
   (if (string? x)
     (buff/write-string buffer x)
     (buff/write-bytes buffer x))
@@ -130,7 +140,7 @@
 (def write-len-string write-2-piece)
 
 (defn write-4-piece [^Buffer buffer x]
-  (buff/write-int buffer (count x))
+  (buff/write-int buffer (buff/length x))
   (if (string? x)
     (buff/write-string buffer x)
     (buff/write-bytes buffer x))
@@ -449,7 +459,7 @@
       :else buffer)
 
   ;; Patch up the size of the message
-  (let [length (buff/writer-index buffer)]
+  (let [length (buff/length buffer)]
     (buff/move-writer-index buffer 0)
     (buff/write-int buffer length)
     (buff/move-writer-index buffer length))))
@@ -464,7 +474,7 @@
   ([^Buffer base-buffer base-fcall-map]
   (let [buffer (buff/ensure-little-endian base-buffer)
         _ (buff/reset-read-index buffer)
-        buffer-size (buff/writer-index buffer)
+        buffer-size (buff/length buffer)
         size (buff/read-int buffer)
         _ (when (not= buffer-size size)
             (throw (ex-info (str "Reported message size and actual size differ: " size "; actual: " buffer-size)
