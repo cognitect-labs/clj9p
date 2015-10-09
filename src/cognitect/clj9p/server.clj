@@ -1,17 +1,18 @@
-(ns ndensity.distributed.9p.server
+(ns cognitect.clj9p.server
   (:require [clojure.core.async :as async]
+            [clojure.stacktrace :as stacktrace]
             [clojure.string :as string]
             [cognitect.clj9p.9p :as n9p]
-            [cognitect.clj9p.proto :as proto]
             [cognitect.clj9p.io :as io]
+            [cognitect.clj9p.proto :as proto]
             [cognitect.net.netty.server :as netty])
-  (:import (io.netty.channel ChannelHandlerContext
+  (:import (io.netty.buffer ByteBuf)
+           (io.netty.buffer PooledByteBufAllocator)
+           (io.netty.channel ChannelHandlerContext
                              Channel
                              ChannelPipeline)
-           (io.netty.buffer ByteBuf)
-           (java.nio ByteOrder)
-           (io.netty.buffer PooledByteBufAllocator)
-           (io.netty.handler.codec LengthFieldBasedFrameDecoder)))
+           (io.netty.handler.codec LengthFieldBasedFrameDecoder)
+           (java.nio ByteOrder)))
 
 (extend-protocol n9p/Remote
   nil
@@ -41,6 +42,14 @@
   (assoc ctx
          :output-fcall (into (:input-fcall ctx) resp-map)))
 
+(defn rerror
+  [ctx message]
+  (make-resp ctx {:type :rerror :ename message}))
+
+(defn unknown-fid
+  [ctx fid]
+  (rerror ctx (str "Unknown fid: " fid)))
+
 (defn tversion
   [context]
   (let [request-version (get-in context [:input-fcall :version])
@@ -53,30 +62,33 @@
 (defn tauth
   [context]
   ;; TODO Add Auth support
-  (make-resp context {:type :rerror
-                      :ename "Auth not required"}))
+  (rerror context "Auth not required"))
+
+(defn- assign-fid-thunk [remote fid uname qid]
+  (fn [state]
+    (assoc-in state [:client-fids remote fid] {:uname uname :qid qid})))
+
+(defn- unassign-fid-thunk [remote fid]
+  (fn [state]
+   (update-in state [:client-fids remote] dissoc fid)))
 
 (defn tattach
   [context]
-  (let [input-fcall (:input-fcall context)
-        remote (n9p/get-remote-id (::remote input-fcall))
-        client-fids (get-in context [:server-state :client-fids remote] {})
+  (let [input-fcall       (:input-fcall context)
+        remote            (n9p/get-remote-id (::remote input-fcall))
+        client-fids       (get-in context [:server-state :client-fids remote] {})
         {:keys [fs root]} (:server-state context)
-        attach-fn (get-in context [:server-state :ops :attach])
-        fid (:fid input-fcall)]
+        attach-fn         (get-in context [:server-state :ops :attach])
+        fid               (:fid input-fcall)
+        root-qid          (:qid root)]
     ;; TODO: Add afid handling
     (cond
-      (client-fids fid) (assoc context
-                               :output-fcall (assoc input-fcall
-                                                    :type :rerror
-                                                    :ename (str "Duplicate fid for client: " fid)))
-      attach-fn (attach-fn context {})
-      :else (-> context
-                (assoc-in [:server-state :client-fids remote fid] {:uname (:uname input-fcall)
-                                                                   ;:server-path [:fs]
-                                                                   :qid (:qid root)})
-                (make-resp {:type :rattach
-                            :qid (:qid root)})))))
+      (client-fids fid) (rerror context (str "Duplicate fid for client: " fid))
+      attach-fn         (attach-fn context {})
+      :else             (-> context
+                            (assoc :server-state-updater (assign-fid-thunk remote fid (:uname input-fcall) root-qid))
+                            (make-resp {:type :rattach
+                                        :qid  root-qid})))))
 
 (defn tflush
   [context]
@@ -86,34 +98,38 @@
 
 (defn twalk
   [context]
-  (let [input-fcall (:input-fcall context)
-        remote (n9p/get-remote-id (::remote input-fcall))
-        input-fid (:fid input-fcall)
+  (let [input-fcall  (:input-fcall context)
+        remote       (n9p/get-remote-id (::remote input-fcall))
+        input-fid    (:fid input-fcall)
         input-newfid (:newfid input-fcall)
-        fid (get-in context [:server-state :client-fids remote input-fid])
-        newfid (get-in context [:server-state :client-fids remote input-newfid])
-        qid (:qid fid)
-        root-qid (get-in context [:server-state :root :qid])
-        file-walk (get-in context [:server-state :fs qid :walk]
-                          (get-in context [:server-state :ops :walk]))]
+        fid          (get-in context [:server-state :client-fids remote input-fid])
+        newfid       (get-in context [:server-state :client-fids remote input-newfid])
+        qid          (:qid fid)
+        root-qid     (get-in context [:server-state :root :qid])
+        file-walk    (get-in context [:server-state :fs qid :walk]
+                             (get-in context [:server-state :ops :walk]))]
     ;; TODO: This cond also needs to handle the cloning of an open fid error
     (cond
-      (nil? fid) (make-resp context {:type :rerror
-                                     :ename (str "Unknown fid: " input-fid)})
+      (nil? fid)
+      (unknown-fid context input-fid)
+
       (and (pos? (count (:wname input-fcall)))
-           (not= (:type qid) proto/QTDIR)) (make-resp context {:type :rerror
-                                                               :ename "Cannot walk in non-directory"})
-      (and (not= input-fid input-newfid)
-           newfid)                         (make-resp context {:type :rerror
-                                                               :ename (str "newfid is a duplicate fid for client: " input-newfid)})
-      (zero? (count (:wname input-fcall))) (-> context
-                                               (assoc-in [:server-state :client-fids remote input-newfid] {:qid root-qid
-                                                                                                           :uname (:uname input-fcall "")})
-                                               (make-resp {:type :rwalk
-                                                           :wqid []}))
-      file-walk (file-walk context qid)
-      :else (make-resp context {:type :rerror
-                                :ename "No walk function"}))))
+           (not= (:type qid) proto/QTDIR))
+      (rerror context "Cannot walk in non-directory")
+
+      (and (not= input-fid input-newfid) newfid)
+      (rerror context (str "newfid is a duplicate fid for client: " input-newfid))
+
+      (zero? (count (:wname input-fcall)))
+      (-> context
+          (assoc :server-state-updater (assign-fid-thunk remote fid (:uname input-fcall "") root-qid))
+          (make-resp {:type :rwalk
+                      :wqid []}))
+      file-walk
+      (file-walk context qid)
+
+      :else
+      (rerror context "No walk function"))))
 
 (defn topen
   [context]
@@ -126,157 +142,143 @@
         file-open (get-in context [:server-state :fs qid :open]
                           (get-in context [:server-state :ops :open]))]
     (cond
-      (nil? fid) (make-resp context {:type :rerror
-                                     :ename (str "Unknown fid (not tracked): " input-fid)})
+      (nil? fid)
+      (unknown-fid input-fid)
+
       ;; TODO: Enforce permissions and access
-      file-open (file-open context qid)
+      file-open
+      (file-open context qid)
+
       (and (nil? (get-in context [:server-state :fs qid]))
-           (not= qid root-qid)) (make-resp context {:type :rerror
-                                                    :ename (str "Unknown fid (not in fs): " input-fid)})
-      :else (make-resp context {:type :ropen
-                                :qid qid
-                                :iounit (- ^long (:iounit input-fcall) ^long proto/IOHDRSZ)}))))
+           (not= qid root-qid))
+      (unknown-fid context input-fid)
+
+      :else
+      (make-resp context {:type :ropen
+                          :qid qid
+                          :iounit (- ^long (:iounit input-fcall) ^long proto/IOHDRSZ)}))))
 
 (defn tcreate
   [context]
   (let [input-fcall (:input-fcall context)
-        remote (n9p/get-remote-id (::remote input-fcall))
-        input-fid (:fid input-fcall)
-        fid (get-in context [:server-state :client-fids remote input-fid])
-        qid (:qid fid)
+        remote      (n9p/get-remote-id (::remote input-fcall))
+        input-fid   (:fid input-fcall)
+        fid         (get-in context [:server-state :client-fids remote input-fid])
+        qid         (:qid fid)
         file-create (get-in context [:server-state :fs qid :create]
                             (get-in context [:server-state :ops :create]))]
     (cond
-      (nil? fid) (make-resp context {:type :rerror
-                                     :ename (str "Unknown fid: " input-fid)})
-      (not= (:type qid) proto/QTDIR) (make-resp context {:type :rerror
-                                                         :ename "Cannot create in a non-directory"})
-      file-create (file-create context qid)
-      :else (make-resp context {:type :rerror
-                                :ename "No create function"}))))
+      (nil? fid)                     (unknown-fid context input-fid)
+      (not= (:type qid) proto/QTDIR) (rerror context "Cannot create in a non-directory")
+      file-create                    (file-create context qid)
+      :else                          (rerror context "No create function"))))
 
 (defn tread
   [context]
   (let [input-fcall (:input-fcall context)
-        remote (n9p/get-remote-id (::remote input-fcall))
-        input-fid (:fid input-fcall)
-        fid (get-in context [:server-state :client-fids remote input-fid])
-        qid (:qid fid)
-        read-count ^long (:count input-fcall)
-        read-count (if (> ^long read-count (- ^long (:msize input-fcall) ^long proto/IOHDRSZ))
-                     (- ^long (:msize input-fcall) ^long proto/IOHDRSZ)
-                     read-count)
-        file-read (get-in context [:server-state :fs qid :read]
-                          (get-in context [:server-state :ops :read]))]
+        remote      (n9p/get-remote-id (::remote input-fcall))
+        input-fid   (:fid input-fcall)
+        fid         (get-in context [:server-state :client-fids remote input-fid])
+        qid         (:qid fid)
+        read-count  (:count input-fcall)
+        read-count  (if (> ^long read-count (- ^long (:msize input-fcall) ^long proto/IOHDRSZ))
+                      (- ^long (:msize input-fcall) ^long proto/IOHDRSZ)
+                      read-count)
+        file-read   (get-in context [:server-state :fs qid :read]
+                            (get-in context [:server-state :ops :read]))]
     (cond
-      (nil? fid) (make-resp context {:type :rerror
-                                     :ename (str "Unknown fid: " input-fid)})
-      (neg? read-count) (make-resp context {:type :rerror
-                                            :ename "Botched 9P call - `count` was negative on read"})
+      (nil? fid)              (unknown-fid context input-fid)
+      (neg? ^long read-count) (rerror context "Botched 9P call - `count` was negative on read")
       ;; TODO: Add auth handling
       ;; TODO: Enforce permissions and access
-      file-read (file-read context qid)
-      :else (make-resp context
-                       {:type :rerror
-                        :ename "No read function"}))))
+      file-read               (file-read context qid)
+      :else                   (rerror context "No read function"))))
 
 (defn twrite
   [context]
   (let [input-fcall (:input-fcall context)
-        remote (n9p/get-remote-id (::remote input-fcall))
-        input-fid (:fid input-fcall)
-        fid (get-in context [:server-state :client-fids remote input-fid])
-        qid (:qid fid)
+        remote      (n9p/get-remote-id (::remote input-fcall))
+        input-fid   (:fid input-fcall)
+        fid         (get-in context [:server-state :client-fids remote input-fid])
+        qid         (:qid fid)
         write-count (:count input-fcall (count (:data input-fcall)))
         write-count (if (> ^long write-count ^long (- ^long (:msize input-fcall) ^long proto/IOHDRSZ))
                       (- ^long (:msize input-fcall) ^long proto/IOHDRSZ)
                       write-count)
-        file-write (get-in context [:server-state :fs qid :write]
-                           (get-in context [:server-state :ops :write]))]
+        file-write  (get-in context [:server-state :fs qid :write]
+                            (get-in context [:server-state :ops :write]))]
     (cond
-      (nil? fid) (make-resp context {:type :rerror
-                                     :ename (str "Unknown fid: " input-fid)})
-      (neg? ^long write-count) (make-resp context {:type :rerror
-                                             :ename "Botched 9P call - `count` was negative on write"})
+      (nil? fid)               (unknown-fid context input-fid)
+      (neg? ^long write-count) (rerror context "Botched 9P call - `count` was negative on write")
       ;; TODO: Add auth handling
       ;; TODO: Enforce permissions and access
-      file-write (file-write context qid)
-      :else (make-resp context
-                       {:type :rerror
-                        :ename "No write function"}))))
+      file-write               (file-write context qid)
+      :else                    (rerror context "No write function"))))
 
 (defn tclunk
   [context]
   (let [input-fcall (:input-fcall context)
-        remote (n9p/get-remote-id (::remote input-fcall))
-        input-fid (:fid input-fcall)
-        fid (get-in context [:server-state :client-fids remote input-fid])
-        qid (:qid fid)
-        file-clunk (get-in context [:server-state :fs qid :clunk]
-                           (get-in context [:server-state :ops :clunk]))]
+        remote      (n9p/get-remote-id (::remote input-fcall))
+        input-fid   (:fid input-fcall)
+        fid         (get-in context [:server-state :client-fids remote input-fid])
+        qid         (:qid fid)
+        file-clunk  (get-in context [:server-state :fs qid :clunk]
+                            (get-in context [:server-state :ops :clunk]))]
     (cond
-      (nil? fid) (make-resp context {:type :rerror
-                                     :ename (str "Unknown fid: " input-fid)})
+      (nil? fid) (unknown-fid context input-fid)
       file-clunk (file-clunk context qid)
       ;; There is no rclunk support (not needed); Drop the fid
-      :else (-> context
-                (update-in [:server-state :client-fids remote] dissoc input-fid)
-                (make-resp {:type :rclunk})))))
+      :else      (-> context
+                     (assoc :server-state-updater (unassign-fid-thunk remote input-fid))
+                     (make-resp {:type :rclunk})))))
 
 (defn tremove
   [context]
   (let [input-fcall (:input-fcall context)
-        remote (n9p/get-remote-id (::remote input-fcall))
-        input-fid (:fid input-fcall)
-        fid (get-in context [:server-state :client-fids remote input-fid])
-        qid (:qid fid)
+        remote      (n9p/get-remote-id (::remote input-fcall))
+        input-fid   (:fid input-fcall)
+        fid         (get-in context [:server-state :client-fids remote input-fid])
+        qid         (:qid fid)
         file-remove (get-in context [:server-state :fs qid :remove]
                             (get-in context [:server-state :ops :remove]))]
     (cond
-      (nil? fid) (make-resp context {:type :rerror
-                                     :ename (str "Unknown fid: " input-fid)})
+      (nil? fid)  (unknown-fid context input-fid)
       file-remove (file-remove context qid)
       ;; There is no rremove support (not needed)
-      :else (update-in context [:server-state :client-fids remote] dissoc input-fid))))
+      :else       (assoc context :server-state-updater (unassign-fid-thunk remote input-fid)))))
 
 (defn tstat
   [context]
   (let [input-fcall (:input-fcall context)
-        remote (n9p/get-remote-id (::remote input-fcall))
-        input-fid (:fid input-fcall)
-        fid (get-in context [:server-state :client-fids remote input-fid])
-        qid (:qid fid)
-        file-stat (get-in context [:server-state :fs qid :stat]
+        remote      (n9p/get-remote-id (::remote input-fcall))
+        input-fid   (:fid input-fcall)
+        fid         (get-in context [:server-state :client-fids remote input-fid])
+        qid         (:qid fid)
+        file-stat   (get-in context [:server-state :fs qid :stat]
                             (get-in context [:server-state :ops :stat]))
-        stat-info (get-in context [:server-state :fs qid :stat-info])]
+        stat-info   (get-in context [:server-state :fs qid :stat-info])]
     (cond
-      (nil? fid) (make-resp context {:type :rerror
-                                     :ename (str "Unknown fid: " input-fid)})
-      stat-info (make-resp context
-                           {:type :rstat
-                            :stat [(merge {:qid qid}
-                                          stat-info)]})
-      file-stat (file-stat context qid)
-      :else (make-resp context
-                       {:type :rerror
-                        :ename "No stat function"}))))
+      (nil? fid) (unknown-fid context input-fid)
+      stat-info  (make-resp context
+                            {:type :rstat
+                             :stat [(merge {:qid qid}
+                                           stat-info)]})
+      file-stat  (file-stat context qid)
+      :else      (rerror context "No stat function"))))
 
 (defn twstat
   [context]
   (let [input-fcall (:input-fcall context)
-        remote (n9p/get-remote-id (::remote input-fcall))
-        input-fid (:fid input-fcall)
-        fid (get-in context [:server-state :client-fids remote input-fid])
-        qid (:qid fid)
-        file-wstat (get-in context [:server-state :fs qid :wstat]
+        remote      (n9p/get-remote-id (::remote input-fcall))
+        input-fid   (:fid input-fcall)
+        fid         (get-in context [:server-state :client-fids remote input-fid])
+        qid         (:qid fid)
+        file-wstat  (get-in context [:server-state :fs qid :wstat]
                             (get-in context [:server-state :ops :wstat]))]
     (cond
-      (nil? fid) (make-resp context {:type :rerror
-                                     :ename (str "Unknown fid: " input-fid)})
+      (nil? fid) (unknown-fid context input-fid)
       file-wstat (file-wstat context qid)
-      :else (make-resp context
-                       {:type :rerror
-                        :ename "No wstat function"}))))
+      :else      (rerror context "No wstat function"))))
 
 (def default-handlers
   {:tversion tversion
@@ -374,38 +376,31 @@
 (defn path-walker
   [ctx qid]
   ;; this should just be a loop recur, since we could have ".." at any level
-  (let [input-fcall (:input-fcall ctx)
-        remote (n9p/get-remote-id (::remote input-fcall))
+  (let [input-fcall            (:input-fcall ctx)
+        remote                 (n9p/get-remote-id (::remote input-fcall))
         {:keys [wname newfid]} input-fcall
-        input-fid (:fid input-fcall)
-        fid (get-in ctx [:server-state :client-fids remote input-fid])
-        root-qid (get-in ctx [:server-state :root :qid])
-        fs (get-in ctx [:server-state :fs])
-        ;path-chuncks (reverse (take (count wname) (iterate butlast wname)))
-        current-path (::string-path (meta qid) "/")
-        wqid (loop [remaining-path-parts wname
-                     path current-path
-                     wqid []]
-                (cond
-                  (empty? remaining-path-parts) wqid
-                  ;(= (first remaining-path-pars ".") (recur (rest remaining-path-parts)
-                  ;                                          path
-                  ;                                          wqid))
-                  (= (first remaining-path-parts) "..") (if (= path "/")
-                                                          wqid
-                                                          (recur (rest remaining-path-parts)
-                                                                 (butlast-path path)
-                                                                 (conj wqid (path->qid fs (butlast-path path)))))
-                  :else (recur (rest remaining-path-parts)
-                               (str path "/" (first remaining-path-parts))
-                               (conj wqid (path->qid fs (str path "/" (first remaining-path-parts)))))))]
+        input-fid              (:fid input-fcall)
+        fid                    (get-in ctx [:server-state :client-fids remote input-fid])
+        root-qid               (get-in ctx [:server-state :root :qid])
+        fs                     (get-in ctx [:server-state :fs])
+        current-path           (::string-path (meta qid) "/")
+        wqid                   (loop [remaining-path-parts wname
+                                      path current-path
+                                      wqid []]
+                                 (cond
+                                   (empty? remaining-path-parts) wqid
+                                   (= (first remaining-path-parts) "..") (if (= path "/")
+                                                                           wqid
+                                                                           (recur (rest remaining-path-parts)
+                                                                                  (butlast-path path)
+                                                                                  (conj wqid (path->qid fs (butlast-path path)))))
+                                   :else (recur (rest remaining-path-parts)
+                                                (str path "/" (first remaining-path-parts))
+                                                (conj wqid (path->qid fs (str path "/" (first remaining-path-parts)))))))]
     (if (some nil? wqid)
-      (make-resp ctx {:type :rerror
-                      :ename "Path/File not found; Path may be incomplete or inconsistent."})
+      (rerror ctx "Path/File not found; Path may be incomplete or inconsistent.")
       (-> ctx
-          (assoc-in [:server-state :client-fids remote newfid] (assoc fid
-                                                                      :qid (or (last wqid)
-                                                                               root-qid)))
+          (assoc :server-state-updater (assign-fid-thunk remote newfid (:uname fid) (or (last wqid) root-qid)))
           (make-resp {:type :rwalk
                       :wqid wqid})))))
 
@@ -416,10 +411,48 @@
     ;; TODO: replace `pr-str` with transit
     (let [stat-str (pr-str (mapv #(fake-stat ctx %) child-qids))]
       (make-resp ctx {:type :rread
-                    :data stat-str}))
+                      :data stat-str}))
     ;; Otherwise, return no data
     (make-resp ctx {:type :rread
                     :data ""})))
+
+(defn- hash-fs
+  "We need to ensure the qids' paths are hashed (that they are all longs/numeric)"
+  [base-state]
+  (reduce
+   (fn [new-fs [qid-map handle]]
+     (assoc new-fs
+            (with-meta (-> qid-map
+                           (update :path io/path-hash)
+                           (update :version (fnil identity 0)))
+              {::string-path (str (:path qid-map))})
+            handle))
+   {}
+   (:fs base-state)))
+
+(defn- removev [pred coll] (vec (remove pred coll)))
+
+(defmacro logging-exceptions [ & body]
+  `(try
+    ~@body
+    (catch Throwable t#
+      (stacktrace/print-stack-trace t#))))
+
+(defn dispatch-handler [state handlers chans input-fcall]
+  (logging-exceptions
+   (println "dispatch-handler: ttype " (:type input-fcall))
+   (let [thandler (handlers (:type input-fcall))]
+     (async/go
+       (thandler {:input-fcall  input-fcall
+                  :server-state state})))))
+
+(defn update-state-and-reply [state-atom chans channel rctx out-chan]
+  (logging-exceptions
+   (let [output-fcall (:output-fcall rctx (:output-fcall (rerror rctx "Server error: Nothing returned from handler.")))]
+     (println "update-state-and-reply: rtype " (:type output-fcall) " channel " channel)
+     (when-let [updater (:server-state-updater rctx)]
+       (swap! state-atom updater))
+     [(removev #{channel} chans) output-fcall])))
 
 (defn server
   "Create a server given input and output channels,
@@ -435,41 +468,26 @@
   ([initial-state override-handlers]
    (server initial-state override-handlers (async/chan 10) (async/chan 10)))
   ([initial-state override-handlers in-chan out-chan]
-   (let [handlers (server-handlers override-handlers)
+   (let [handlers   (server-handlers override-handlers)
          base-state (n9p/deep-merge default-initial-state initial-state)
-         ;; We need to ensure the qids' paths are hashed (that they are all longs/numeric)
-         hashed-fs (reduce (fn [new-fs [qid-map handle]]
-                             (assoc new-fs
-                                    (with-meta (-> qid-map
-                                                   (update :path io/path-hash)
-                                                   (update :version (fnil identity 0)))
-                                               {::string-path (str (:path qid-map))})
-                                    handle))
-                           {}
-                           (:fs base-state))
-         state-atom (atom (assoc base-state :fs hashed-fs))]
+         state-atom (atom (assoc base-state :fs (hash-fs base-state)))]
      (assert (get-in base-state [:root :qid]) "Aborting: Server failed to establish a root qid")
-     (async/go-loop []
-       (if-let [input-fcall (async/<! in-chan)]
-         (let [old-state @state-atom
-               tctx {:input-fcall input-fcall
-                     :server-state old-state}
-               thandler (handlers (:type input-fcall))
-               rctx (thandler tctx) ;; TODO: should this be channel-driven to be more async compatible?
-               output-fcall (:output-fcall rctx)
-               new-state (:server-state rctx)]
-           (when (not= new-state old-state)
-             ;; Swapping with merge will not Clunk correctly - obv
-             ;(swap! state-atom n9p/deep-merge new-state)
-             (reset! state-atom new-state))
-           (if output-fcall ;; Evert T-message should have an R-message
-             (if (async/>! out-chan output-fcall)
-               (recur)
-               (async/close! in-chan))
-             ;; ... But if no R-message, just skip it and move on;
-             ;;      Most likely this will cause an error with the client
-             (recur)))
-         (async/close! out-chan)))
+     (async/go-loop [channels [in-chan]]
+       (println "there are " (count channels)  "channels")
+       (let [[value channel] (async/alts! channels)]
+         (cond
+           ;; value is input fcall map
+           (and (= in-chan channel) (some? value))
+           (recur (conj channels (dispatch-handler @state-atom handlers channels value)))
+
+           ;; value is resulting context
+           (some? value)
+           (let [[channels reply] (update-state-and-reply state-atom channels channel value out-chan)]
+             (async/>! out-chan reply)
+             (recur channels))
+
+           :else
+           (async/close! out-chan))))
      {:server-in in-chan
       :server-out out-chan
       :handlers-9p handlers
