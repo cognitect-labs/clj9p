@@ -562,7 +562,7 @@
   ;; FS keys have to be qids to allow for multi-version
   (def serv (server {:ops {:stat stat-faker
                            :walk path-walker
-                           :read dirreader}
+                           :read interop-dirreader}
                      :fs {{:type proto/QTFILE :version 0
                            :path "/net"} {:read (fn [context qid])
                                           :write (fn [context qid])}
