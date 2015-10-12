@@ -10,7 +10,7 @@ FIXME
 ## TODO
 
  * Open handling
- * Bring over the tests
+ * DONE Bring over the tests
  * Refactor server state handling? (open for extension without 9P client)
  * Server loop needs alts (long read/writes for "devices")
  * Server loop exception handling

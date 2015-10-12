@@ -39,8 +39,7 @@
   "An auxiliary function when your context modifications only
   involve adding an output-fcall"
   [ctx resp-map]
-  (assoc ctx
-         :output-fcall (into (:input-fcall ctx) resp-map)))
+  (assoc ctx :output-fcall (into (:input-fcall ctx) resp-map)))
 
 (defn rerror
   [ctx message]
@@ -548,9 +547,8 @@
                                               (.. ctx (channel) (parent) (close)))))}])
           server-map-9p)))
 
-(def tcp-server   (partial netty-server netty/tcp-channel-class))
-(def sctp-server  (partial netty-server netty/sctp-channel-class))
-(def local-server (partial netty-server netty/local-channel-class))
+(def tcp-server #(netty-server netty/tcp-channel-class %1 %2))
+(def sctp-server #(netty-server netty/sctp-channel-class %1 %2))
 
 (comment
 
