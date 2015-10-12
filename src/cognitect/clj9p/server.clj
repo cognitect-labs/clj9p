@@ -143,7 +143,7 @@
                           (get-in context [:server-state :ops :open]))]
     (cond
       (nil? fid)
-      (unknown-fid input-fid)
+      (unknown-fid context input-fid)
 
       ;; TODO: Enforce permissions and access
       file-open
