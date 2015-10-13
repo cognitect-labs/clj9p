@@ -14,9 +14,10 @@
                                 :path "/interjections"} {}
                                {:type proto/QTFILE :version 0
                                 :path "/interjections/hello"} {:read (fn [context qid]
-                                                                       (let [greeting (get-in context [:server-state :app :greeting])]
+                                                                       (let [greeting (get-in context [:server-state :app :greeting])
+                                                                             greeting-seeked (subs greeting (get-in context [:input-fcall :offset]))]
                                                                          (server/make-resp context {:type :rread
-                                                                                                    :data greeting})))
+                                                                                                    :data greeting-seeked})))
                                                                :write (fn [context qid]
                                                                         (let [current-greeting (get-in context [:server-state :app :greeting])
                                                                               {:keys [data offset]} (:input-fcall context)
@@ -41,9 +42,15 @@
                                   :join? false}
                                  serv))
 
+(defn start! []
+  (require '[cognitect.net.netty.server])
+  (cognitect.net.netty.server/start tcp-serv))
+
 (comment
   (require '[cognitect.net.netty.server :as netty])
   (netty/start tcp-serv)
+
+  (vals (:client-fids @(:state serv)))
 
   (require '[cognitect.clj9p.client :as clj9p] :reload)
   (def cl (clj9p/client))
