@@ -12,8 +12,8 @@ FIXME
  * Open handling
  * DONE Bring over the tests
  * Refactor server state handling? (open for extension without 9P client)
- * Server loop needs alts (long read/writes for "devices")
- * Server loop exception handling
+ * DONE Server loop needs alts (long read/writes for "devices")
+ * DONE Server loop exception handling
  * DONE Refactor netty server (less Java port)
  * DONE Refactor `tcp-server` in clj9p to be `netty-server`, passing in transport
 

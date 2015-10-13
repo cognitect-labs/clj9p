@@ -142,7 +142,7 @@
                           (get-in context [:server-state :ops :open]))]
     (cond
       (nil? fid)
-      (unknown-fid input-fid)
+      (unknown-fid context input-fid)
 
       ;; TODO: Enforce permissions and access
       file-open
@@ -450,7 +450,6 @@
 
 (defn dispatch-handler [state handlers chans input-fcall]
   (logging-exceptions
-   (println "dispatch-handler: ttype " (:type input-fcall))
    (let [thandler (handlers (:type input-fcall))]
      (async/go
        (thandler {:input-fcall  input-fcall
@@ -459,7 +458,6 @@
 (defn update-state-and-reply [state-atom chans channel rctx out-chan]
   (logging-exceptions
    (let [output-fcall (:output-fcall rctx (:output-fcall (rerror rctx "Server error: Nothing returned from handler.")))]
-     (println "update-state-and-reply: rtype " (:type output-fcall) " channel " channel)
      (when-let [updater (:server-state-updater rctx)]
        (swap! state-atom updater))
      [(removev #{channel} chans) output-fcall])))
@@ -483,7 +481,6 @@
          state-atom (atom (assoc base-state :fs (hash-fs base-state)))]
      (assert (get-in base-state [:root :qid]) "Aborting: Server failed to establish a root qid")
      (async/go-loop [channels [in-chan]]
-       (println "there are " (count channels)  "channels")
        (let [[value channel] (async/alts! channels)]
          (cond
            ;; value is input fcall map
@@ -535,16 +532,18 @@
                                                                                                               0 4 -4 0
                                                                                                               true))))
                           :channel-read (fn [^ChannelHandlerContext ctx msg]
-                                          (let [buffer (cast ByteBuf msg)
-                                                fcall (io/decode-fcall! buffer {})]
-                                            ;; Ensure backpressure bubbles up
-                                            (when-not (async/>!! (:server-in server-map-9p)
-                                                                 (assoc fcall
-                                                                        ::buffer buffer
-                                                                        ::remote ctx
-                                                                        ::remote-addr (.. ctx (channel) (remoteAddress))))
-                                              (.. ctx (channel) (close))
-                                              (.. ctx (channel) (parent) (close)))))}])
+                                          (logging-exceptions
+                                           (let [buffer (cast ByteBuf msg)
+                                                 fcall  (io/decode-fcall! buffer {})]
+                                             ;; Ensure backpressure
+                                             ;; bubbles up
+                                             (when-not (async/>!! (:server-in server-map-9p)
+                                                                  (assoc fcall
+                                                                         ::buffer buffer
+                                                                         ::remote ctx
+                                                                         ::remote-addr (.. ctx (channel) (remoteAddress))))
+                                               (.. ctx (channel) (close))
+                                               (.. ctx (channel) (parent) (close))))))}])
           server-map-9p)))
 
 (def tcp-server #(netty-server netty/tcp-channel-class %1 %2))
@@ -561,7 +560,7 @@
   ;; FS keys have to be qids to allow for multi-version
   (def serv (server {:ops {:stat stat-faker
                            :walk path-walker
-                           :read dirreader}
+                           :read interop-dirreader}
                      :fs {{:type proto/QTFILE :version 0
                            :path "/net"} {:read (fn [context qid])
                                           :write (fn [context qid])}

@@ -2,7 +2,8 @@
   (:require [cognitect.net.netty.util :as util])
   (:import (io.netty.channel Channel
                              ChannelFuture
-                             ChannelOption)
+                             ChannelOption
+                             EventLoopGroup)
            (io.netty.channel.nio NioEventLoopGroup)
            (io.netty.bootstrap Bootstrap)
            (io.netty.buffer PooledByteBufAllocator)))
@@ -72,4 +73,3 @@
                              :channel-read-complete (fn [ctx] (.flush ctx))}]))
   (start echo-client)
   )
-

@@ -1,5 +1,6 @@
 (ns cognitect.net.netty.util
-  (:import (io.netty.channel Channel
+  (:import java.net.SocketAddress
+           (io.netty.channel Channel
                              ChannelHandler
                              ChannelInboundHandler
                              ChannelOutboundHandler
