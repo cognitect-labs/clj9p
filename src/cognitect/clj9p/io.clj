@@ -2,6 +2,7 @@
   (:require [cognitect.clj9p.9p :as n9p]
             [cognitect.clj9p.proto :as proto]
             [cognitect.clj9p.buffer :as buff]
+            [io.pedestal.log :as log]
             [clojure.core.async :as async])
   (:import (cognitect.clj9p.buffer Buffer)
            (java.nio ByteOrder)
@@ -32,7 +33,9 @@
   ([]
   (.directBuffer PooledByteBufAllocator/DEFAULT))
   ([initial-byte-array]
-   (buff/write-byte-array (.directBuffer PooledByteBufAllocator/DEFAULT) initial-byte-array)))
+   (if (instance? ByteBuf initial-byte-array)
+     initial-byte-array ;; Caller assumed Byte Arrays, but was operating in-place
+     (buff/write-byte-array (.directBuffer PooledByteBufAllocator/DEFAULT) initial-byte-array))))
 
 (extend-protocol buff/Length
 
@@ -488,6 +491,7 @@
         _ (buff/reset-read-index buffer)
         buffer-size (buff/length buffer)
         size (buff/read-int buffer)
+        _ (log/info :msg "Attempting to decode:" :buffer size buffer-size)
         _ (when (not= buffer-size size)
             (throw (ex-info (str "Reported message size and actual size differ: " size "; actual: " buffer-size)
                             {:reported-size size

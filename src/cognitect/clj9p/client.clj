@@ -3,6 +3,7 @@
   (:require [clojure.string :as string]
             [clojure.edn :as edn]
             [clojure.core.async :as async :refer [go-loop]]
+            [io.pedestal.log :as log]
             [cognitect.clj9p.9p :as n9p]
             [cognitect.clj9p.io :as io]
             [cognitect.clj9p.proto :as proto]
@@ -197,23 +198,52 @@
     (force-walk client full-path)
     client))
 
+(defn close [client full-path]
+  (when-let [fid (first (keep (fn [[fid open-map]]
+                                (when (= full-path (:path open-map))
+                                  fid))
+                              (:open-fids @(:state client))))]
+    (log/info :close fid)
+    (let [mount-path (find-mount-path client full-path)
+          resp (resolving-blocking-call client mount-path (io/fcall {:type :tclunk :fid fid}))]
+      ;; When there are no errors, remove any associated open fids
+      (if (= (:type resp) :rerror)
+        (throw (ex-info "Failed client clunk for close" {:client client
+                                                         :path full-path
+                                                         :error-response resp}))
+        (do (swap! (:state client) update-in [:open-fids] dissoc fid)
+            (swap! (:state client) update-in (concat [:fs] (string/split full-path #"/")) dissoc :fid)))))
+  client)
+
 (defn base-open [client mount-path fid mode]
-  (resolving-blocking-call client mount-path (io/fcall {:type :topen :fid fid :mode mode})))
+  ;; On the surface, this should be `resolving-blocking-call` - opening the best match possible,
+  ;; But in the case where you're opening a dir that many fs's contribute to, you need to
+  ;; open all of them.
+  (distinct (lazy-blocking-call client mount-path (io/fcall {:type :topen :fid fid :mode mode}))))
 
 (defn open
   ([client full-path]
    (open client full-path proto/OREAD))
   ([client full-path mode]
-   (let [walked (walk client full-path)
-         mount-path (find-mount-path client full-path) ;; We know it's good because the walk passed
-         fid (path-fid client full-path)
-         resp (base-open client mount-path fid mode)]
-     (if (= (:type resp) :rerror)
-       (throw (ex-info "Failed client open" {:client client
-                                             :path full-path
-                                             :mode mode
-                                             :error-response resp}))
-       resp))))
+   (if-let [already-opened (get-in @(:state client) [:open-fids (path-fid client full-path)])]
+     (cond
+       (= mode (:mode already-opened)) client
+       :else (do (close client full-path)
+                 (open client full-path mode)))
+     (let [walked (walk client full-path)
+           mount-path (find-mount-path client full-path) ;; We know it's good because the walk passed
+           fid (path-fid client full-path)
+           responses (base-open client mount-path fid mode)]
+       (if (every? #(= (:type %) :rerror) responses)
+         (throw (ex-info "Failed client open" {:client client
+                                               :path full-path
+                                               :mode mode
+                                               :error-responses responses}))
+         (doseq [resp (remove #(= (:type %) :rerror) responses)]
+           (swap! (:state client) assoc-in [:open-fids fid] (assoc resp
+                                                                   :mode mode
+                                                                   :path full-path))
+           client))))))
 
 (defn full-read
   ([client full-path]
@@ -297,9 +327,12 @@
   ([client full-path]
    (ls client full-path binstat-read-fn))
   ([client full-path dir-read-fn]
-   (let [opened-qid (try (open client full-path)
-                         (catch Throwable t ;; this may throw if it's already been opened
-                           {}))
+   (let [walked (walk client full-path)
+         mount-path (find-mount-path client full-path) ;; We know it's good because the walk passed
+         fid (path-fid client full-path)
+         open-map (or (get-in @(:state client) [:open-fids fid])
+                      (do (open client full-path)
+                          (get-in @(:state client) [:open-fids fid])))
         qid (path-qid client full-path)]
     (if (= proto/QTDIR (:type qid))
       (let [read-data (full-read client full-path 0 0)]
@@ -311,10 +344,14 @@
                                 (assoc result (:name e) e)))
                             {}
                             (flatten (map dir-read-fn read-data)))))
-             (catch Throwable t read-data)))
+             (catch Throwable t
+               (println "Failure to read the ls results")
+               (clojure.stacktrace/print-stack-trace t)
+               read-data)))
       (and (path-qid client full-path)
            (last (string/split full-path #"/")))))))
 
+;; TODO: Correctly handle the create based on walk results: https://swtch.com/plan9port/man/man9/open.html
 (defn touch
   ([client full-path]
    (touch client full-path 0644 1))
@@ -326,12 +363,19 @@
          walked (walk client base-path)
          mount-path (find-mount-path client full-path) ;; We know it's good because the walk passed
          fid (path-fid client base-path)
+         open-map (or (get-in @(:state client) [:open-fids fid])
+                      (do (open client full-path proto/OWRITE)
+                          (get-in @(:state client) [:open-fids fid])))
          resp (resolving-blocking-call client mount-path (io/fcall {:type :tcreate :fid fid :name file-name :mode mode :perm permission}))]
      (if (= (:type resp) :rerror)
        (throw (ex-info "Failed client create" {:client client
                                                :path full-path
                                                :error-response resp}))
        (walk client full-path)))))
+
+(defn fsiounit [client full-path]
+  (when-let [opened-fd (get-in @(:state client) [:open-fids (path-fid client full-path)])]
+    (:iounit opened-fd)))
 
 (defn file-type [client full-path]
   (let [walked (walk client full-path)
@@ -365,6 +409,7 @@
                              [framer
                               {:channel-read (fn [ctx msg]
                                                (let [buffer (cast ByteBuf msg)
+                                                     _ (log/info :msg "Client is decoding...")
                                                      fcall (io/decode-fcall! buffer {})]
                                                  ;; Ensure backpressure bubbles up
                                                  (when-not (async/>!! from-server
@@ -386,11 +431,11 @@
 
 (comment
 
-  (require '[ndensity.distributed.9p.server :as server] :reload)
+  (require '[cognitect.clj9p.server :as server] :reload)
   (def serv2 (server/server {:app {:scratchpad {}}
                              :ops {:stat server/stat-faker
                                    :walk server/path-walker
-                                   :read server/dirreader}
+                                   :read server/interop-dirreader}
                              :fs {{:type proto/QTFILE
                                    :path "/cpu"} {:read (fn [context qid]
                                                           (let [client-addr (:ndensity.distributed.9p.server/remote-addr context)

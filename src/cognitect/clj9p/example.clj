@@ -48,5 +48,13 @@
   (require '[cognitect.clj9p.client :as clj9p] :reload)
   (def cl (clj9p/client))
   (clj9p/mount cl {"/nodes" [(clj9p/tcp-connect {:host "127.0.0.1" :port 9090})]})
+  ;(clj9p/mount cl {"/nodes" [[(:server-in serv) (:server-out serv)]]})
   (map :name (clj9p/ls cl "/nodes/interjections"))
+  (clj9p/read-str cl "/nodes/interjections/hello")
+
+  (:fs (deref (:state cl)))
+  (:open-fids (deref (:state cl)))
+
+  (clj9p/close cl "/nodes/interjections")
+
   )
