@@ -3,12 +3,17 @@
 # Error: Fid mishandling
 echo
 echo "Reading the root dir: '/'"
-9 9p -a 127.0.0.1:9090 read /
+9 9p -a 127.0.0.1:9090 ls /
+
+echo
+echo "Stat a dir: '/interjections'"
+9 9p -a 127.0.0.1:9090 stat /interjections
 
 echo
 echo "Reading a synthetic dir: '/interjections'"
 echo "Skipping -- offset on interop-dirreader isn't working per spec"
 #9 9p -a 127.0.0.1:9090 read /interjections
+#9 9p -a 127.0.0.1:9090 ls /interjections
 
 echo
 echo "Reading a file: '/interjections/hello'"
