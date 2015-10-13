@@ -2,7 +2,6 @@
   (:require [clojure.core.async :as async]
             [clojure.stacktrace :as stacktrace]
             [clojure.string :as string]
-            [io.pedestal.log :as log]
             [cognitect.clj9p.9p :as n9p]
             [cognitect.clj9p.io :as io]
             [cognitect.clj9p.proto :as proto]
@@ -46,6 +45,7 @@
 
 (defn rerror
   [ctx ename]
+  (println "Error happened with fcall:" (:input-fcall ctx))
   (make-resp ctx {:type :rerror :ename ename}))
 
 (defn unknown-fid
@@ -313,6 +313,10 @@
       file-wstat (file-wstat context qid)
       :else      (rerror context "No wstat function"))))
 
+(defn reporting-ex-handler [^Throwable t ctx]
+  (rerror ctx (str "There was a server error when handling the " (get-in ctx [:input-fcall :type])
+                   "msg.\nReason: " t)))
+
 (def default-handlers
   {:tversion tversion
    :tauth tauth
@@ -326,7 +330,9 @@
    :tclunk tclunk
    :tremove tremove
    :tstat tstat
-   :twstat twstat})
+   :twstat twstat
+   ;; The `ex-handler` is used to rescue bad requests and produce valid r-messages that report the error
+   :ex-handler reporting-ex-handler})
 
 (defn server-handlers [override-map]
   (merge default-handlers
@@ -479,28 +485,21 @@
 
 (defn- removev [pred coll] (vec (remove pred coll)))
 
-;; TODO: Replace this with pattern-matched exception handling instead of printing the stacktrace
-(defmacro logging-exceptions [ & body]
-  `(try
-    ~@body
-    (catch Throwable t#
-      (stacktrace/print-stack-trace t#))))
-
 (defn dispatch-handler [state handlers chans input-fcall]
-  (logging-exceptions
-   (println "dispatch-handler: ttype " (:type input-fcall))
-   (let [thandler (handlers (:type input-fcall))]
+   (let [thandler (handlers (:type input-fcall))
+         ctx {:input-fcall  input-fcall
+              :server-state state}]
      (async/go
-       (thandler {:input-fcall  input-fcall
-                  :server-state state})))))
+       (try
+         (thandler ctx)
+         (catch Throwable t
+           ((:ex-handler handlers reporting-ex-handler) t ctx))))))
 
 (defn update-state-and-reply [state-atom chans channel rctx out-chan]
-  (logging-exceptions
-   (let [output-fcall (:output-fcall rctx (:output-fcall (rerror rctx "Server error: Nothing returned from handler.")))]
-     (println "update-state-and-reply: rtype " (:type output-fcall) " channel " channel)
+  (let [output-fcall (:output-fcall rctx (:output-fcall (rerror rctx "Server error: Nothing returned from handler.")))]
      (when-let [updater (:server-state-updater rctx)]
        (swap! state-atom updater))
-     [(removev #{channel} chans) output-fcall])))
+     [(removev #{channel} chans) output-fcall]))
 
 (defn server
   "Create a server given input and output channels,
@@ -521,10 +520,7 @@
          state-atom (atom (assoc base-state :fs (hash-fs base-state)))]
      (assert (get-in base-state [:root :qid]) "Aborting: Server failed to establish a root qid")
      (async/go-loop [channels [in-chan]]
-       (log/info :msg (str "there are " (count channels)  "channels"))
        (let [[value channel] (async/alts! channels)]
-
-         (log/info :msg "Server potentially got a new fcall" :value value)
          (cond
            ;; value is input fcall map
            (and (= in-chan channel) (some? value))
@@ -556,7 +552,6 @@
    (async/go-loop [write-count 0]
      (if-let [output-fcall (async/<! (:server-out server-map-9p))]
        (do
-         (log/info :msg "Attempting to Netty write:" :fcall output-fcall)
          (.write ^ChannelHandlerContext (::remote output-fcall)
                  ;(io/encode-fcall! output-fcall (::buffer output-fcall)) ;; The buffer might be capped based on Framing
                  (io/encode-fcall! output-fcall (.directBuffer PooledByteBufAllocator/DEFAULT)))
@@ -577,7 +572,6 @@
                                                                                                               true))))
                           :channel-read (fn [^ChannelHandlerContext ctx msg]
                                           (let [buffer (cast ByteBuf msg)
-                                                _ (log/info :msg "Reading from Netty chan")
                                                 fcall (io/decode-fcall! buffer {})]
                                             ;; Ensure backpressure bubbles up
                                             (when-not (async/>!! (:server-in server-map-9p)
