@@ -26,7 +26,8 @@
                                                                                              greeting-data
                                                                                              (str (subs current-greeting 0 offset) greeting-data))]
                                                                           (-> context
-                                                                              (assoc-in [:server-state :app :greeting] new-greeting)
+                                                                              (assoc :server-state-updater (fn [state]
+                                                                                                             (assoc-in state [:app :greeting] new-greeting)))
                                                                               (server/make-resp {:type :rwrite
                                                                                                  :count (count new-greeting)}))))}
                                {:type proto/QTFILE :version 0
@@ -55,9 +56,12 @@
   (require '[cognitect.clj9p.client :as clj9p] :reload)
   (def cl (clj9p/client))
   (clj9p/mount cl {"/nodes" [(clj9p/tcp-connect {:host "127.0.0.1" :port 9090})]})
+  ;; To use the channels directly, you need to comment out `tcp-serv` above
   ;(clj9p/mount cl {"/nodes" [[(:server-in serv) (:server-out serv)]]})
+
   (map :name (clj9p/ls cl "/nodes/interjections"))
   (clj9p/read-str cl "/nodes/interjections/hello")
+  (clj9p/write cl "/nodes/interjections/hello" "Hi!")
 
   (:fs (deref (:state cl)))
   (:open-fids (deref (:state cl)))
