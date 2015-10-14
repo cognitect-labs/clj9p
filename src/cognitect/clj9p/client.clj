@@ -212,7 +212,7 @@
                                                          :path full-path
                                                          :error-response resp}))
         (do (swap! (:state client) update-in [:open-fids] dissoc fid)
-            (swap! (:state client) update-in (concat [:fs] (string/split full-path #"/")) dissoc :fid)))))
+            (swap! (:state client) update-in (conj (rest (string/split full-path #"/")) :fs) dissoc :fid)))))
   client)
 
 (defn base-open [client mount-path fid mode]
