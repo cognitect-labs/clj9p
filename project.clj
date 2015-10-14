@@ -4,7 +4,6 @@
   :dependencies [[org.clojure/clojure "1.7.0"]
                  [org.clojure/core.async "0.1.346.0-17112a-alpha" :exclusions [[org.clojure/tools.analyzer.jvm]]]
                  [org.clojure/tools.analyzer.jvm "0.6.7"]
-                 [io.pedestal/pedestal.service "0.4.0"]
                  [io.netty/netty-all "4.0.30.Final"]]
   :global-vars {*warn-on-reflection* true
                 *unchecked-math* :warn-on-boxed

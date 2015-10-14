@@ -3,7 +3,6 @@
   (:require [clojure.string :as string]
             [clojure.edn :as edn]
             [clojure.core.async :as async :refer [go-loop]]
-            [io.pedestal.log :as log]
             [cognitect.clj9p.9p :as n9p]
             [cognitect.clj9p.io :as io]
             [cognitect.clj9p.proto :as proto]
@@ -203,7 +202,6 @@
                                 (when (= full-path (:path open-map))
                                   fid))
                               (:open-fids @(:state client))))]
-    (log/info :close fid)
     (let [mount-path (find-mount-path client full-path)
           resp (resolving-blocking-call client mount-path (io/fcall {:type :tclunk :fid fid}))]
       ;; When there are no errors, remove any associated open fids
@@ -409,7 +407,6 @@
                              [framer
                               {:channel-read (fn [ctx msg]
                                                (let [buffer (cast ByteBuf msg)
-                                                     _ (log/info :msg "Client is decoding...")
                                                      fcall (io/decode-fcall! buffer {})]
                                                  ;; Ensure backpressure bubbles up
                                                  (when-not (async/>!! from-server
