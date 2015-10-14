@@ -50,6 +50,7 @@
 
 (defn unknown-fid
   [ctx fid]
+  (println "Fcall for unkown fid" (:input-fcall ctx))
   (rerror ctx (str "Unknown fid: " fid)))
 
 (defn directory? [qid]
@@ -580,7 +581,14 @@
                                                                         ::remote ctx
                                                                         ::remote-addr (.. ctx (channel) (remoteAddress))))
                                               (.. ctx (channel) (close))
-                                              (.. ctx (channel) (parent) (close)))))}])
+                                              (.. ctx (channel) (parent) (close)))))
+                          ;; TODO: We need a way to retire the client tracking in the server-state
+                          ;:disconnect (fn [^ChannelHandlerContext ctx p]
+                          ;              (let [remote-addr (.. ctx (channel) (remoteAddress))]
+                          ;                (println "TRYING to disconnect:" remote-addr)
+                          ;                (swap! (:state server-map-9p) update-in [:client-fids] dissoc remote-addr)
+                          ;                (.disconnect ^ChannelHandlerContext ctx ^ChannelPromise p)))
+                          }])
           server-map-9p)))
 
 (def tcp-server #(netty-server netty/tcp-channel-class %1 %2))
