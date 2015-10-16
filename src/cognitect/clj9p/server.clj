@@ -139,7 +139,7 @@
 
       (zero? (count (:wname input-fcall)))
       (-> context
-          (assoc :server-state-updater (assign-fid-thunk remote fid (:uname input-fcall "") root-qid))
+          (assoc :server-state-updater (assign-fid-thunk remote input-newfid (:uname input-fcall "") qid))
           (make-resp {:type :rwalk
                       :wqid []}))
 
