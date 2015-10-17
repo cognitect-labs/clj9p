@@ -478,6 +478,12 @@
     (buff/write-int buffer length)
     (buff/move-writer-index buffer length))))
 
+(def ^{:doc "Return a transducer that encodes an fcall into a Buffer"}
+  encode-fcall-xf
+  (map
+   (fn [fcall]
+     (encode-fcall! fcall (.directBuffer PooledByteBufAllocator/DEFAULT)))))
+
 (defn decode-fcall!
   "Given a buffer (full of bytes) and optionally a base fcall map,
   decode the bytes into a full fcall map.  Returns the decoded/complete fcall-map.
@@ -582,6 +588,12 @@
                                               {:fid (buff/read-int buffer)})
                                             {:stat (read-stats buffer true (:dot-u fcall-map))})
       :else fcall-map))))
+
+(def ^{:doc "A transducer that converts Buffers into fcall maps"}
+  decode-fcall-xf
+  (map
+   (fn [^Buffer buffer]
+     (decode-fcall! buffer))))
 
 (defn permission?
   "Return true if some stat-like map allows some specific permission for uid,

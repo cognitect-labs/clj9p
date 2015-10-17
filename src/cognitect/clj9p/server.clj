@@ -574,7 +574,7 @@
                                                                                                               true))))
                           :channel-read (fn [^ChannelHandlerContext ctx msg]
                                           (let [buffer (cast ByteBuf msg)
-                                                fcall (io/decode-fcall! buffer {})]
+                                                fcall (io/decode-fcall! (.duplicate buffer) {})]
                                             ;; Ensure backpressure bubbles up
                                             (when-not (async/>!! (:server-in server-map-9p)
                                                                  (assoc fcall
