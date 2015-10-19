@@ -48,10 +48,9 @@
   (cognitect.net.netty.server/start tcp-serv))
 
 (comment
-  (require '[cognitect.net.netty.server :as netty])
-  (netty/start tcp-serv)
+  (start!)
 
-  (vals (:client-fids @(:state serv)))
+  (keys  (:client-fids @(:state serv)))
 
   (require '[cognitect.clj9p.client :as clj9p] :reload)
   (def cl (clj9p/client))

@@ -66,7 +66,7 @@
   (let [mounts (-> client :state deref :mounts)
         mount-paths (keys mounts)]
     (reduce (fn [match mount-path]
-              (if (and (.startsWith full-path mount-path)
+              (if (and (string/starts-with? full-path mount-path)
                        (> (count mount-path) (count match)))
                 mount-path
                 match))
@@ -356,8 +356,8 @@
   ([client full-path permission]
    (touch client full-path permission 1))
   ([client full-path permission mode]
-   (let [file-name (subs full-path (.lastIndexOf ^String full-path "/"))
-         base-path (subs full-path 0 (.lastIndexOf ^String full-path "/"))
+   (let [file-name (subs full-path (string/last-index-of full-path "/"))
+         base-path (subs full-path 0 (string/last-index-of full-path "/"))
          walked (walk client base-path)
          mount-path (find-mount-path client full-path) ;; We know it's good because the walk passed
          fid (path-fid client base-path)

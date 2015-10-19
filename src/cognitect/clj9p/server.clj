@@ -75,7 +75,7 @@
 (defn tversion
   [context]
   (let [request-version (get-in context [:input-fcall :version])
-        version (if (.startsWith ^String request-version "9P2000")
+        version (if (string/starts-with? request-version "9P2000")
                   request-version
                   "unknown")]
     (make-resp context {:type :rversion
@@ -401,7 +401,7 @@
                    (keys fs)))))
 
 (defn butlast-path [path]
-  (subs path 0 (.lastIndexOf ^String path "/")))
+  (subs path 0 (string/last-index-of path "/")))
 
 (defn qid-path [qid]
   (::string-path (meta qid)))
