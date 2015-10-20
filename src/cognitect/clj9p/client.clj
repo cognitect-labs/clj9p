@@ -319,7 +319,7 @@
 (defn binstat-read-fn [x]
   (when x
     (let [buffer (io/default-buffer x)]
-      (io/read-stats buffer false false))))
+      (io/read-stats buffer true false))))
 
 (defn ls
   ([client full-path]

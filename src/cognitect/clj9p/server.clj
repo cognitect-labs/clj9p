@@ -1,6 +1,5 @@
 (ns cognitect.clj9p.server
   (:require [clojure.core.async :as async]
-            [clojure.stacktrace :as stacktrace]
             [clojure.string :as string]
             [cognitect.clj9p.9p :as n9p]
             [cognitect.clj9p.io :as io]
@@ -45,7 +44,7 @@
 
 (defn rerror
   [ctx ename]
-  (println "Error happened with fcall:" (:input-fcall ctx))
+  (println "Error happened with fcall:" (:input-fcall ctx) "\n\t" ename)
   (make-resp ctx {:type :rerror :ename ename}))
 
 (defn unknown-fid
@@ -316,7 +315,7 @@
 
 (defn reporting-ex-handler [^Throwable t ctx]
   (rerror ctx (str "There was a server error when handling the " (get-in ctx [:input-fcall :type])
-                   "msg.\nReason: " t)))
+                   " msg.\nReason: " t)))
 
 (def default-handlers
   {:tversion tversion
@@ -449,7 +448,7 @@
 
 (defn clj-dirreader
   [ctx qid]
-  (if-let [child-qids (and (= (:type qid) proto/QTDIR)
+  (if-let [child-qids (and (directory? qid)
                            (qid-children-qids (get-in ctx [:server-state :fs]) qid))]
     (let [stat-str (pr-str (mapv #(fake-stat ctx %) child-qids))]
       (make-resp ctx {:type :rread
@@ -460,12 +459,17 @@
 
 (defn interop-dirreader
   [ctx qid]
-  (if-let [child-qids (and (= (:type qid) proto/QTDIR)
+  (if-let [child-qids (and (directory? qid)
                            (qid-children-qids (get-in ctx [:server-state :fs]) qid))]
     (let [buffer (io/default-buffer)
-          stat-buffer (io/write-stats buffer (mapv #(fake-stat ctx %) child-qids) false)]
+          ;stat-buffer (io/write-stats buffer (mapv #(fake-stat ctx %) child-qids) true)
+          _ (println "Qids:" child-qids)
+          stat-buffer (io/write-stats buffer [(fake-stat ctx (first child-qids))] true)
+          _ (println "dirreader offset:" (get-in ctx [:input-fcall :offset]))
+          ret-buffer (io/offset-slice stat-buffer (get-in ctx [:input-fcall :offset]))
+          _ (println "slice length" (io/length ret-buffer))]
       (make-resp ctx {:type :rread
-                      :data stat-buffer}))
+                      :data ret-buffer}))
     ;; Otherwise, return no data
     (make-resp ctx {:type :rread
                     :data ""})))
@@ -497,8 +501,8 @@
            ((:ex-handler handlers reporting-ex-handler) t ctx))))))
 
 (defn update-state-and-reply [state-atom chans channel rctx out-chan]
-  (let [output-fcall (:output-fcall rctx
-                                    (:output-fcall (rerror rctx "Server error: Nothing returned from handler.")))]
+  (let [output-fcall (:output-fcall rctx)
+        output-fcall (if output-fcall output-fcall (:output-fcall (rerror rctx "Server error: Nothing returned from handler.")))]
      (when-let [updater (:server-state-updater rctx)]
        (swap! state-atom updater))
      [(removev #{channel} chans) output-fcall]))
@@ -554,6 +558,7 @@
    (async/go-loop [write-count 0]
      (if-let [output-fcall (async/<! (:server-out server-map-9p))]
        (do
+         (println "Responding with:" output-fcall)
          (.write ^ChannelHandlerContext (::remote output-fcall)
                  ;(io/encode-fcall! output-fcall (::buffer output-fcall)) ;; The buffer might be capped based on Framing
                  (io/encode-fcall! output-fcall (.directBuffer PooledByteBufAllocator/DEFAULT)))
