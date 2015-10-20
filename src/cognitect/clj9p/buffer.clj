@@ -27,6 +27,7 @@
   (as-byte-array [t])
   (as-byte-buffer [t])
   (ensure-little-endian [t])
+  (slice [t index length])
   (clear [t]))
 
 (defprotocol Length
