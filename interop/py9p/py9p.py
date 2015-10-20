@@ -212,7 +212,11 @@ class Marshal9P(object):
 
     def dec2(self):
         """Decode 2-byte unsigned"""
-        return struct.unpack('H', self.buf.read(2))[0]
+        bys = self.buf.read(2)
+        print "Docoding 2-byte - Bytes are: "+repr(bys)
+        unpacked = struct.unpack('H', bys)
+        print "Unpacked is: "+str(unpacked)
+        return unpacked[0]
 
     def enc4(self, x):
         """Encode 4-byte unsigned"""
@@ -239,6 +243,7 @@ class Marshal9P(object):
 
     def decS(self):
         """Decode data string with 2-byte length"""
+        print "Reading a two-length string/data..."
         return self.buf.read(self.dec2())
 
     def encD(self, d):
@@ -290,6 +295,7 @@ class Marshal9P(object):
     def setBuffer(self, init=b""):
         self.buf = io.BytesIO()
         self.buf.write(init)
+        print "Buf is: "+repr(self.buf.getvalue())
 
     def send(self, fd, fcall):
         "Format and send a message"
@@ -417,7 +423,9 @@ class Marshal9P(object):
             self.encstat(fcall.stat, 1)
 
     def decstat(self, stats, enclen=0):
+        print "Decoding Stat..."
         if enclen:
+            print "Length was encoded..."
             # feed 2 bytes of total size
             self.buf.read(2)
         while self.buf.tell() < self.length:
@@ -432,7 +440,9 @@ class Marshal9P(object):
                     s.mtime,
                     s.length) = self.decF("=HIBIQIIIQ", 39)
             s.qid = Qid(typ, vers, path)
+            print "QID: "+repr(s.qid)
             s.name = self.decS()     # name
+            print "Name: "+s.name
             s.uid = self.decS()      # uid
             s.gid = self.decS()      # gid
             s.muid = self.decS()     # muid
@@ -442,6 +452,7 @@ class Marshal9P(object):
                         s.gidnum,
                         s.muidnum) = self.decF("=III", 12)
             stats.append(s)
+            print stats
 
     def dec(self, fcall):
         if fcall.type in (Tversion, Rversion):
