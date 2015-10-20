@@ -30,7 +30,7 @@
   "This creates a Buffer suitable for use with encoding/decoding fcalls,
   but one should prefer using PooledByteBufAllocator from Netty (with direct Buffers only)"
   ([]
-  (.directBuffer PooledByteBufAllocator/DEFAULT))
+   (.directBuffer PooledByteBufAllocator/DEFAULT))
   ([initial-byte-array]
    (if (instance? ByteBuf initial-byte-array)
      initial-byte-array ;; Caller assumed Byte Arrays, but was operating in-place
@@ -40,7 +40,7 @@
 
   ByteBuf
   (length [t]
-    (.writerIndex t))
+    (.readableBytes t))
 
   String
   (length [t]
@@ -109,9 +109,16 @@
     (.nioBuffer t)) ;; Note: This will share content with the underlying Buffer
   (ensure-little-endian [t]
     (.order t ByteOrder/LITTLE_ENDIAN))
+  (slice [t index length]
+    (.slice t index length))
   (clear [t]
     (.clear t)
     t))
+
+(defn offset-slice [t offset]
+  (buff/slice t offset (- (buff/length t) offset)))
+
+(def length buff/length)
 
 ;; Auxiliary functions
 ;; -------------------
