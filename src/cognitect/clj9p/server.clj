@@ -497,8 +497,8 @@
            ((:ex-handler handlers reporting-ex-handler) t ctx))))))
 
 (defn update-state-and-reply [state-atom chans channel rctx out-chan]
-  (let [output-fcall (:output-fcall rctx)
-        output-fcall (if output-fcall output-fcall (:output-fcall (rerror rctx "Server error: Nothing returned from handler.")))]
+  (let [output-fcall (:output-fcall rctx
+                                    (:output-fcall (rerror rctx "Server error: Nothing returned from handler.")))]
      (when-let [updater (:server-state-updater rctx)]
        (swap! state-atom updater))
      [(removev #{channel} chans) output-fcall]))
