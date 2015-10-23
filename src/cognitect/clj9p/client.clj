@@ -43,6 +43,7 @@
 
 (def default-initial-state
   {:version proto/version
+   :root-fid 1
    :next-fid 2
    :mounts {}
    :fs {}})
@@ -131,12 +132,15 @@
                                                                    :uname (System/getProperty "user.name")
                                                                    :aname ""
                                                                    :afid proto/NOFID}))
-              ;; Always attach the root nodes as fid 1
-              attach-result (blocking-call client mount-def (io/fcall {:type :tattach :fid 1}))]
+              ;; Always attach the root nodes as fid `:root-fid`
+              attach-result (blocking-call client mount-def (io/fcall {:type :tattach :fid (:root-fid @(:state client))}))]
           (when-not (get-in @(:state client) [:fs base-path :qid])
             (swap! (:state client)
                    assoc-in [:fs (subs base-path 1)] {:qid (:qid attach-result) :fid 1})))))
     client))
+
+(defn clunk [client mount-def fid]
+  (blocking-call client mount-def (io/fcall {:type :tclunk :fid fid})))
 
 (defn unmount-all!
   "Unmount all file systems and remove the client's inbound channel.
@@ -144,7 +148,7 @@
   A client may not be used after this call."
   [client]
   (doseq [mount (flatten (vals (:mounts client)))]
-    (blocking-call client mount (io/fcall {:type :tclunk :fid 1}))
+    (clunk client mount 1)
     (async/close! mount))
   (async/close! (:from-server client))
   (reset! (:state client) (:initial-state client))
@@ -197,12 +201,27 @@
     (force-walk client full-path)
     client))
 
+(defn closefid [client mount-path fid]
+  (let [;; TODO: This fid only exists on a certain server, we need to track/know that
+        full-path (get-in @(:state client) [:open-fids fid :path])
+        resp (resolving-blocking-call client mount-path (io/fcall {:type :tclunk :fid fid}))]
+    ;; When there are no errors, remove any associated open fids
+    (if (= (:type resp) :rerror)
+      (throw (ex-info "Failed client clunk for closefid" {:client client
+                                                          :mount-path mount-path
+                                                          :full-path full-path
+                                                          :error-response resp}))
+      (do (swap! (:state client) update-in [:open-fids] dissoc fid)
+          (swap! (:state client) update-in (conj (rest (string/split full-path #"/")) :fs) dissoc :fid)))
+    client))
+
 (defn close [client full-path]
   (when-let [fid (first (keep (fn [[fid open-map]]
                                 (when (= full-path (:path open-map))
                                   fid))
                               (:open-fids @(:state client))))]
     (let [mount-path (find-mount-path client full-path)
+          ;; TODO: This fid only exists on a certain server, we need to track/know that
           resp (resolving-blocking-call client mount-path (io/fcall {:type :tclunk :fid fid}))]
       ;; When there are no errors, remove any associated open fids
       (if (= (:type resp) :rerror)
@@ -319,7 +338,7 @@
 (defn binstat-read-fn [x]
   (when x
     (let [buffer (io/default-buffer x)]
-      (io/read-stats buffer true false))))
+      (io/read-stats buffer false false))))
 
 (defn ls
   ([client full-path]
@@ -333,13 +352,15 @@
                           (get-in @(:state client) [:open-fids fid])))
         qid (path-qid client full-path)]
     (if (= proto/QTDIR (:type qid))
-      (let [read-data (full-read client full-path 0 0)]
-        (try (into []
+      (let [read-data (full-read client full-path 0 0)
+            _ (closefid client mount-path fid)]
+        (flatten (map dir-read-fn read-data))
+        #_(try (into []
                    (vals
                      (reduce (fn [result e]
-                              (if (result (:name e))
-                                result
-                                (assoc result (:name e) e)))
+                              (if (result (:name e)) ;; If we already have a file by that name...
+                                result ;; Ignore it and move on...
+                                (assoc result (:name e) e))) ;; Otherwise, add the new file to our results
                             {}
                             (flatten (map dir-read-fn read-data)))))
              (catch Throwable t
@@ -371,9 +392,19 @@
                                                :error-response resp}))
        (walk client full-path)))))
 
+(defn lsofids [client]
+  (:open-fids @(:state client)))
+
+(defn lsof [client]
+  (->> (lsofids client)
+      vals
+      (map #(select-keys % [:path :mode]))))
+
 (defn fsiounit [client full-path]
   (when-let [opened-fd (get-in @(:state client) [:open-fids (path-fid client full-path)])]
     (:iounit opened-fd)))
+
+
 
 (defn file-type [client full-path]
   (let [walked (walk client full-path)

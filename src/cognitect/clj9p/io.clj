@@ -115,8 +115,11 @@
     (.clear t)
     t))
 
-(defn offset-slice [t offset]
+(defn slice
+  ([t offset]
   (buff/slice t offset (- (buff/length t) offset)))
+  ([t offset length]
+   (buff/slice t offset length)))
 
 (def length buff/length)
 
@@ -508,7 +511,7 @@
                             {:reported-size size
                              :buffer-size buffer-size
                              :fcall-map base-fcall-map})))
-        _ (when-not (< 7 size 0xffffffff)
+        _ (when-not (<= 7 size 0xffffffff)
             (throw (ex-info (str "Bad fcall message size on decode: " size)
                             {:size size
                              :fcall-map base-fcall-map})))

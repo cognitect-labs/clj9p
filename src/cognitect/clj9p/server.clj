@@ -462,11 +462,12 @@
   (if-let [child-qids (and (directory? qid)
                            (qid-children-qids (get-in ctx [:server-state :fs]) qid))]
     (let [buffer (io/default-buffer)
-          ;stat-buffer (io/write-stats buffer (mapv #(fake-stat ctx %) child-qids) true)
           _ (println "Qids:" child-qids)
-          stat-buffer (io/write-stats buffer [(fake-stat ctx (first child-qids))] true)
+          stat-buffer (io/write-stats buffer (mapv #(fake-stat ctx %) child-qids) false)
+          ;stat-buffer (io/write-stats buffer [(fake-stat ctx (first child-qids))] false)
           _ (println "dirreader offset:" (get-in ctx [:input-fcall :offset]))
-          ret-buffer (io/offset-slice stat-buffer (get-in ctx [:input-fcall :offset]))
+          ;; TODO: offset slice isn't enough, it also needs to factor in the length of the read i-fcall
+          ret-buffer (io/slice stat-buffer (get-in ctx [:input-fcall :offset]))
           _ (println "slice length" (io/length ret-buffer))]
       (make-resp ctx {:type :rread
                       :data ret-buffer}))
@@ -640,6 +641,9 @@
   (async/>!! (:server-in serv) (io/fcall {:type :tstat :fid 4}))
   (async/>!! (:server-in serv) (io/fcall {:type :tread :fid 5 :offset 0 :count 0}))
   (async/>!! (:server-in serv) (io/fcall {:type :tread :fid 3 :offset 0 :count 0}))
+
+  (async/>!! (:server-in serv) (io/fcall {:type :tclunk :fid 2}))
+
   (async/<!! (:server-out serv))
   (async/close! (:server-in serv))
 
