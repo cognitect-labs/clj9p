@@ -58,12 +58,14 @@
   ;; To use the channels directly, you need to comment out `tcp-serv` above
   ;(clj9p/mount cl {"/nodes" [[(:server-in serv) (:server-out serv)]]})
 
+  (map :name (clj9p/ls cl "/nodes"))
   (map :name (clj9p/ls cl "/nodes/interjections"))
   (clj9p/read-str cl "/nodes/interjections/hello")
   (clj9p/write cl "/nodes/interjections/hello" "Hi!")
 
   (:fs (deref (:state cl)))
-  (:open-fids (deref (:state cl)))
+  (clj9p/lsofids cl)
+  (clj9p/lsof cl)
 
   (clj9p/close cl "/nodes/interjections")
 
