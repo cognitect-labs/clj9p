@@ -49,7 +49,7 @@
   (cognitect.net.netty.server/start tcp-serv))
 
 (comment
-  (start!)
+  (def srv  (start!))
 
   (keys  (:client-fids @(:state serv)))
 

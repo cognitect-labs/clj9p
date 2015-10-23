@@ -13,6 +13,8 @@
            (io.netty.handler.codec LengthFieldBasedFrameDecoder)
            (java.nio ByteOrder)))
 
+(def ^:dynamic *debug-fcall* nil)
+
 (extend-protocol n9p/Remote
   nil
   (get-remote-id [t] t)
@@ -555,12 +557,48 @@
     (netty/stop serv-map)
     serv-map))
 
+(def fcall-keys
+  {:tversion [:type :tag :msize :version]
+   :rversion [:type :tag :msize :version]
+   :tauth    [:type :tag :afid :uname :aname]
+   :rauth    [:type :tag :aqid]
+   :rerror   [:type :tag :ename]
+   :tflush   [:type :tag :oldtag]
+   :rflush   [:type :tag]
+   :tattach  [:type :tag :afid :uname :aname]
+   :rattach  [:type :tag :qid]
+   :twalk    [:type :tag :fid :newfid :wname]
+   :rwalk    [:type :tag :wqid]
+   :topen    [:type :tag :fid :mode]
+   :ropen    [:type :tag :qid :iounit]
+   :topenfd  [:type :tag :fid :mode]
+   :ropenfd  [:type :tag :qid :iounit :unixfd]
+   :tcreate  [:type :tag :fid :name :perm :mode]
+   :rcreate  [:type :tag :qid :iounit]
+   :tread    [:type :tag :fid :offset :count]
+   :rread    [:type :tag :count :data]
+   :twrite   [:type :tag :fid :offset :count :data]
+   :rwrite   [:type :tag :count]
+   :tclunk   [:type :tag :fid]
+   :rclunk   [:type :tag]
+   :tremove  [:type :tag :fid]
+   :rremove  [:type :tag]
+   :tstat    [:type :tag :fid]
+   :rstat    [:type :tag :stat]
+   :twstat   [:type :tag :fid :stat]
+   :rwstat   [:type :tag]})
+
+(defn- show-fcall
+  [prefix fcall-map]
+  (println prefix (pr-str (select-keys fcall-map (get fcall-keys (:type fcall-map) [:type :tag])))))
+
 (defn netty-server
   ([channel-class server-options server-map-9p]
    ;; Start the Netty-specific output go-loop
    (async/go-loop [write-count 0]
      (if-let [output-fcall (async/<! (:server-out server-map-9p))]
        (do
+         (when *debug-fcall* (show-fcall "<- " output-fcall))
          (.write ^ChannelHandlerContext (::remote output-fcall)
                  ;(io/encode-fcall! output-fcall (::buffer output-fcall)) ;; The buffer might be capped based on Framing
                  (io/encode-fcall! output-fcall (.directBuffer PooledByteBufAllocator/DEFAULT)))
@@ -582,6 +620,7 @@
                           :channel-read (fn [^ChannelHandlerContext ctx msg]
                                           (let [buffer (cast ByteBuf msg)
                                                 fcall (io/decode-fcall! (.duplicate buffer) {})]
+                                            (when *debug-fcall* (show-fcall "-> " fcall))
                                             ;; Ensure backpressure bubbles up
                                             (when-not (async/>!! (:server-in server-map-9p)
                                                                  (assoc fcall
