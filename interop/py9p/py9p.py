@@ -452,7 +452,7 @@ class Marshal9P(object):
                         s.gidnum,
                         s.muidnum) = self.decF("=III", 12)
             stats.append(s)
-            print stats
+            print [x.tolstr() for x in stats]
 
     def dec(self, fcall):
         if fcall.type in (Tversion, Rversion):
