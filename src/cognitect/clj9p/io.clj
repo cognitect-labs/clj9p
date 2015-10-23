@@ -121,6 +121,8 @@
   ([t offset length]
    (buff/slice t offset length)))
 
+(def little-endian buff/ensure-little-endian)
+
 (def length buff/length)
 
 ;; Auxiliary functions
