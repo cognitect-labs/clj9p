@@ -1,6 +1,5 @@
 (ns cognitect.clj9p.server
   (:require [clojure.core.async :as async]
-            [clojure.stacktrace :as stacktrace]
             [clojure.string :as string]
             [cognitect.clj9p.9p :as n9p]
             [cognitect.clj9p.io :as io]
@@ -35,6 +34,8 @@
 ;; NOTE: YOU SHOULD ALWAYS BUILD OUTPUT FCALLS FROM INPUT FCALLS
 ;;       -- servers, like Netty, smuggle data within fcalls --
 
+;; Auxiliary functions
+;; --------------------
 (defn make-resp
   "An auxiliary function when your context modifications only
   involve adding an output-fcall"
@@ -42,17 +43,38 @@
   (assoc ctx :output-fcall (into (:input-fcall ctx) resp-map)))
 
 (defn rerror
-  [ctx message]
-  (make-resp ctx {:type :rerror :ename message}))
+  [ctx ename]
+  (println "Error happened with fcall:" (:input-fcall ctx) "\n\t" ename)
+  (make-resp ctx {:type :rerror :ename ename}))
 
 (defn unknown-fid
   [ctx fid]
+  (println "Fcall for unkown fid" (:input-fcall ctx))
   (rerror ctx (str "Unknown fid: " fid)))
+
+(defn directory? [qid]
+  (pos? (bit-and (:type qid) proto/QTDIR)))
+
+(defn- assign-fid-thunk [remote fid uname qid]
+  (fn [state]
+    (assoc-in state [:client-fids remote fid] {:uname uname
+                                               :qid qid
+                                               :open-mode -1
+                                               ;; TODO: Handle auth cases
+                                               :auth? false})))
+
+(defn- unassign-fid-thunk [remote fid]
+  (fn [state]
+   (update-in state [:client-fids remote] dissoc fid)))
+
+
+;; Response functions/handlers
+;; ---------------------------
 
 (defn tversion
   [context]
   (let [request-version (get-in context [:input-fcall :version])
-        version (if (.startsWith ^String request-version "9P2000")
+        version (if (string/starts-with? request-version "9P2000")
                   request-version
                   "unknown")]
     (make-resp context {:type :rversion
@@ -63,13 +85,6 @@
   ;; TODO Add Auth support
   (rerror context "Auth not required"))
 
-(defn- assign-fid-thunk [remote fid uname qid]
-  (fn [state]
-    (assoc-in state [:client-fids remote fid] {:uname uname :qid qid})))
-
-(defn- unassign-fid-thunk [remote fid]
-  (fn [state]
-   (update-in state [:client-fids remote] dissoc fid)))
 
 (defn tattach
   [context]
@@ -107,13 +122,15 @@
         root-qid     (get-in context [:server-state :root :qid])
         file-walk    (get-in context [:server-state :fs qid :walk]
                              (get-in context [:server-state :ops :walk]))]
-    ;; TODO: This cond also needs to handle the cloning of an open fid error
     (cond
       (nil? fid)
       (unknown-fid context input-fid)
 
+      (not= (:open-mode fid) -1)
+      (rerror context "Cannot clone an open fid")
+
       (and (pos? (count (:wname input-fcall)))
-           (not= (:type qid) proto/QTDIR))
+           (not (directory? qid)))
       (rerror context "Cannot walk in non-directory")
 
       (and (not= input-fid input-newfid) newfid)
@@ -121,9 +138,10 @@
 
       (zero? (count (:wname input-fcall)))
       (-> context
-          (assoc :server-state-updater (assign-fid-thunk remote fid (:uname input-fcall "") root-qid))
+          (assoc :server-state-updater (assign-fid-thunk remote input-newfid (:uname input-fcall "") qid))
           (make-resp {:type :rwalk
                       :wqid []}))
+
       file-walk
       (file-walk context qid)
 
@@ -139,23 +157,37 @@
         qid (:qid fid)
         root-qid (get-in context [:server-state :root :qid])
         file-open (get-in context [:server-state :fs qid :open]
-                          (get-in context [:server-state :ops :open]))]
+                          (get-in context [:server-state :ops :open]))
+        open-mode-thunk (fn [open-mode]
+                          (fn [state]
+                            (assoc-in state [:client-fids remote input-fid :open-mode] open-mode)))]
+
     (cond
       (nil? fid)
       (unknown-fid context input-fid)
 
-      ;; TODO: Enforce permissions and access
+      (not= (:open-mode fid) -1)
+      (rerror context "Botched 9p call: FID is already in an open state")
+
+      ;; TODO: Also force access permissions
+      (and (directory? qid)
+           (not= (bit-and (:mode input-fcall)
+                          (bit-not proto/ORCLOSE)) proto/OREAD))
+      (rerror context "FD is a directory, mode not allowed")
+
       file-open
-      (file-open context qid)
+      (file-open context qid) ;; It is expected that server implementations correctly set open perms
 
       (and (nil? (get-in context [:server-state :fs qid]))
            (not= qid root-qid))
       (unknown-fid context input-fid)
 
       :else
-      (make-resp context {:type :ropen
-                          :qid qid
-                          :iounit (- ^long (:iounit input-fcall) ^long proto/IOHDRSZ)}))))
+      (-> context
+          (assoc :server-state-updater (open-mode-thunk (:mode input-fcall))) ;; If no implementation, we just open as told regardless
+          (make-resp {:type :ropen
+                      :qid qid
+                      :iounit (- ^long (:iounit input-fcall) ^long proto/IOHDRSZ)})))))
 
 (defn tcreate
   [context]
@@ -168,7 +200,9 @@
                             (get-in context [:server-state :ops :create]))]
     (cond
       (nil? fid)                     (unknown-fid context input-fid)
-      (not= (:type qid) proto/QTDIR) (rerror context "Cannot create in a non-directory")
+      (not= (:open-mode fid) -1)     (rerror context "Botched 9P call: Cannot create in a non-open'd descriptor")
+
+      (not (directory? qid))         (rerror context "Cannot create in a non-directory")
       file-create                    (file-create context qid)
       :else                          (rerror context "No create function"))))
 
@@ -279,6 +313,10 @@
       file-wstat (file-wstat context qid)
       :else      (rerror context "No wstat function"))))
 
+(defn reporting-ex-handler [^Throwable t ctx]
+  (rerror ctx (str "There was a server error when handling the " (get-in ctx [:input-fcall :type])
+                   " msg.\nReason: " t)))
+
 (def default-handlers
   {:tversion tversion
    :tauth tauth
@@ -292,7 +330,9 @@
    :tclunk tclunk
    :tremove tremove
    :tstat tstat
-   :twstat twstat})
+   :twstat twstat
+   ;; The `ex-handler` is used to rescue bad requests and produce valid r-messages that report the error
+   :ex-handler reporting-ex-handler})
 
 (defn server-handlers [override-map]
   (merge default-handlers
@@ -317,6 +357,9 @@
                             :fs {}
                             ;; These are fallback ops if a file in the fs doesn't implement them
                             :ops {}})
+
+;; Common override handler utilities
+;; ----------------------------------
 
 (defn fake-stat [ctx qid]
   (if-let [stat-info (get-in ctx [:server-state :fs qid :stat-info])]
@@ -357,7 +400,7 @@
                    (keys fs)))))
 
 (defn butlast-path [path]
-  (subs path 0 (.lastIndexOf ^String path "/")))
+  (subs path 0 (string/last-index-of path "/")))
 
 (defn qid-path [qid]
   (::string-path (meta qid)))
@@ -405,7 +448,7 @@
 
 (defn clj-dirreader
   [ctx qid]
-  (if-let [child-qids (and (= (:type qid) proto/QTDIR)
+  (if-let [child-qids (and (directory? qid)
                            (qid-children-qids (get-in ctx [:server-state :fs]) qid))]
     (let [stat-str (pr-str (mapv #(fake-stat ctx %) child-qids))]
       (make-resp ctx {:type :rread
@@ -416,17 +459,23 @@
 
 (defn interop-dirreader
   [ctx qid]
-  (if-let [child-qids (and (= (:type qid) proto/QTDIR)
+  (if-let [child-qids (and (directory? qid)
                            (qid-children-qids (get-in ctx [:server-state :fs]) qid))]
-    (let [buffer (io/default-buffer)
-          stat-buffer (io/write-stats buffer (mapv #(fake-stat ctx %) child-qids) false)]
+    (let [buffer (io/little-endian (io/default-buffer))
+          _ (println "Qids:" child-qids)
+          stat-buffer (io/write-stats buffer (mapv #(fake-stat ctx %) child-qids) false)
+          ;stat-buffer (io/write-stats buffer [(fake-stat ctx (first child-qids))] false)
+          _ (println "dirreader offset:" (get-in ctx [:input-fcall :offset]))
+          ;; TODO: offset slice isn't enough, it also needs to factor in the length of the read i-fcall
+          ret-buffer (io/slice stat-buffer (get-in ctx [:input-fcall :offset]))
+          _ (println "slice length" (io/length ret-buffer))]
       (make-resp ctx {:type :rread
-                      :data stat-buffer}))
+                      :data ret-buffer}))
     ;; Otherwise, return no data
     (make-resp ctx {:type :rread
                     :data ""})))
 
-(defn- hash-fs
+(defn hash-fs
   "We need to ensure the qids' paths are hashed (that they are all longs/numeric)"
   [base-state]
   (reduce
@@ -442,25 +491,22 @@
 
 (defn- removev [pred coll] (vec (remove pred coll)))
 
-(defmacro logging-exceptions [ & body]
-  `(try
-    ~@body
-    (catch Throwable t#
-      (stacktrace/print-stack-trace t#))))
-
 (defn dispatch-handler [state handlers chans input-fcall]
-  (logging-exceptions
-   (let [thandler (handlers (:type input-fcall))]
+   (let [thandler (handlers (:type input-fcall))
+         ctx {:input-fcall  input-fcall
+              :server-state state}]
      (async/go
-       (thandler {:input-fcall  input-fcall
-                  :server-state state})))))
+       (try
+         (thandler ctx)
+         (catch Throwable t
+           ((:ex-handler handlers reporting-ex-handler) t ctx))))))
 
 (defn update-state-and-reply [state-atom chans channel rctx out-chan]
-  (logging-exceptions
-   (let [output-fcall (:output-fcall rctx (:output-fcall (rerror rctx "Server error: Nothing returned from handler.")))]
+  (let [output-fcall (:output-fcall rctx)
+        output-fcall (if output-fcall output-fcall (:output-fcall (rerror rctx "Server error: Nothing returned from handler.")))]
      (when-let [updater (:server-state-updater rctx)]
        (swap! state-atom updater))
-     [(removev #{channel} chans) output-fcall])))
+     [(removev #{channel} chans) output-fcall]))
 
 (defn server
   "Create a server given input and output channels,
@@ -513,6 +559,7 @@
    (async/go-loop [write-count 0]
      (if-let [output-fcall (async/<! (:server-out server-map-9p))]
        (do
+         (println "Responding with:" output-fcall)
          (.write ^ChannelHandlerContext (::remote output-fcall)
                  ;(io/encode-fcall! output-fcall (::buffer output-fcall)) ;; The buffer might be capped based on Framing
                  (io/encode-fcall! output-fcall (.directBuffer PooledByteBufAllocator/DEFAULT)))
@@ -532,18 +579,23 @@
                                                                                                               0 4 -4 0
                                                                                                               true))))
                           :channel-read (fn [^ChannelHandlerContext ctx msg]
-                                          (logging-exceptions
-                                           (let [buffer (cast ByteBuf msg)
-                                                 fcall  (io/decode-fcall! buffer {})]
-                                             ;; Ensure backpressure
-                                             ;; bubbles up
-                                             (when-not (async/>!! (:server-in server-map-9p)
-                                                                  (assoc fcall
-                                                                         ::buffer buffer
-                                                                         ::remote ctx
-                                                                         ::remote-addr (.. ctx (channel) (remoteAddress))))
-                                               (.. ctx (channel) (close))
-                                               (.. ctx (channel) (parent) (close))))))}])
+                                          (let [buffer (cast ByteBuf msg)
+                                                fcall (io/decode-fcall! buffer {})]
+                                            ;; Ensure backpressure bubbles up
+                                            (when-not (async/>!! (:server-in server-map-9p)
+                                                                 (assoc fcall
+                                                                        ::buffer buffer
+                                                                        ::remote ctx
+                                                                        ::remote-addr (.. ctx (channel) (remoteAddress))))
+                                              (.. ctx (channel) (close))
+                                              (.. ctx (channel) (parent) (close)))))
+                          ;; TODO: We need a way to retire the client tracking in the server-state
+                          ;:disconnect (fn [^ChannelHandlerContext ctx p]
+                          ;              (let [remote-addr (.. ctx (channel) (remoteAddress))]
+                          ;                (println "TRYING to disconnect:" remote-addr)
+                          ;                (swap! (:state server-map-9p) update-in [:client-fids] dissoc remote-addr)
+                          ;                (.disconnect ^ChannelHandlerContext ctx ^ChannelPromise p)))
+                          }])
           server-map-9p)))
 
 (def tcp-server #(netty-server netty/tcp-channel-class %1 %2))
@@ -560,10 +612,9 @@
   ;; FS keys have to be qids to allow for multi-version
   (def serv (server {:ops {:stat stat-faker
                            :walk path-walker
-                           :read interop-dirreader}
+                           :read clj-dirreader}
                      :fs {{:type proto/QTFILE :version 0
-                           :path "/net"} {:read (fn [context qid])
-                                          :write (fn [context qid])}
+                           :path "/net"} {} ;; you can imagine this is a TCP stack
                           {:type proto/QTDIR :version 0
                            :path "/databases"} {:stat-info {:name "databases" ;; this is only to demo `:stat-info`
                                                             :mode (+ proto/DMDIR 0755)
@@ -590,6 +641,9 @@
   (async/>!! (:server-in serv) (io/fcall {:type :tstat :fid 4}))
   (async/>!! (:server-in serv) (io/fcall {:type :tread :fid 5 :offset 0 :count 0}))
   (async/>!! (:server-in serv) (io/fcall {:type :tread :fid 3 :offset 0 :count 0}))
+
+  (async/>!! (:server-in serv) (io/fcall {:type :tclunk :fid 2}))
+
   (async/<!! (:server-out serv))
   (async/close! (:server-in serv))
 

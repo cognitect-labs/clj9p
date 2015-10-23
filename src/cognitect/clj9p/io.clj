@@ -30,15 +30,17 @@
   "This creates a Buffer suitable for use with encoding/decoding fcalls,
   but one should prefer using PooledByteBufAllocator from Netty (with direct Buffers only)"
   ([]
-  (.directBuffer PooledByteBufAllocator/DEFAULT))
+   (.directBuffer PooledByteBufAllocator/DEFAULT))
   ([initial-byte-array]
-   (buff/write-byte-array (.directBuffer PooledByteBufAllocator/DEFAULT) initial-byte-array)))
+   (if (instance? ByteBuf initial-byte-array)
+     initial-byte-array ;; Caller assumed Byte Arrays, but was operating in-place
+     (buff/write-byte-array (.directBuffer PooledByteBufAllocator/DEFAULT) initial-byte-array))))
 
 (extend-protocol buff/Length
 
   ByteBuf
   (length [t]
-    (.writerIndex t))
+    (.readableBytes t))
 
   String
   (length [t]
@@ -107,9 +109,21 @@
     (.nioBuffer t)) ;; Note: This will share content with the underlying Buffer
   (ensure-little-endian [t]
     (.order t ByteOrder/LITTLE_ENDIAN))
+  (slice [t index length]
+    (.slice t index length))
   (clear [t]
     (.clear t)
     t))
+
+(defn slice
+  ([t offset]
+  (buff/slice t offset (- (buff/length t) offset)))
+  ([t offset length]
+   (buff/slice t offset length)))
+
+(def little-endian buff/ensure-little-endian)
+
+(def length buff/length)
 
 ;; Auxiliary functions
 ;; -------------------
@@ -493,7 +507,7 @@
                             {:reported-size size
                              :buffer-size buffer-size
                              :fcall-map base-fcall-map})))
-        _ (when-not (< 7 size 0xffffffff)
+        _ (when-not (<= 7 size 0xffffffff)
             (throw (ex-info (str "Bad fcall message size on decode: " size)
                             {:size size
                              :fcall-map base-fcall-map})))
