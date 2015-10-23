@@ -462,13 +462,9 @@
   (if-let [child-qids (and (directory? qid)
                            (qid-children-qids (get-in ctx [:server-state :fs]) qid))]
     (let [buffer (io/little-endian (io/default-buffer))
-          _ (println "Qids:" child-qids)
           stat-buffer (io/write-stats buffer (mapv #(fake-stat ctx %) child-qids) false)
-          ;stat-buffer (io/write-stats buffer [(fake-stat ctx (first child-qids))] false)
-          _ (println "dirreader offset:" (get-in ctx [:input-fcall :offset]))
           ;; TODO: offset slice isn't enough, it also needs to factor in the length of the read i-fcall
-          ret-buffer (io/slice stat-buffer (get-in ctx [:input-fcall :offset]))
-          _ (println "slice length" (io/length ret-buffer))]
+          ret-buffer (io/slice stat-buffer (get-in ctx [:input-fcall :offset]))]
       (make-resp ctx {:type :rread
                       :data ret-buffer}))
     ;; Otherwise, return no data
@@ -559,7 +555,6 @@
    (async/go-loop [write-count 0]
      (if-let [output-fcall (async/<! (:server-out server-map-9p))]
        (do
-         (println "Responding with:" output-fcall)
          (.write ^ChannelHandlerContext (::remote output-fcall)
                  ;(io/encode-fcall! output-fcall (::buffer output-fcall)) ;; The buffer might be capped based on Framing
                  (io/encode-fcall! output-fcall (.directBuffer PooledByteBufAllocator/DEFAULT)))
