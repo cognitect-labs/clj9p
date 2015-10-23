@@ -461,7 +461,7 @@
   [ctx qid]
   (if-let [child-qids (and (directory? qid)
                            (qid-children-qids (get-in ctx [:server-state :fs]) qid))]
-    (let [buffer (io/default-buffer)
+    (let [buffer (io/little-endian (io/default-buffer))
           _ (println "Qids:" child-qids)
           stat-buffer (io/write-stats buffer (mapv #(fake-stat ctx %) child-qids) false)
           ;stat-buffer (io/write-stats buffer [(fake-stat ctx (first child-qids))] false)
