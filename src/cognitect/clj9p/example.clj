@@ -8,7 +8,7 @@
 
 (def serv (server/server {:app {:greeting "Hello World!"}
                           :ops {:stat server/stat-faker
-                                :wstat server/stat-faker
+                                :wstat (server/stub-output-fn {:type :rwstat})
                                 :walk server/path-walker
                                 :read server/interop-dirreader}
                           :fs {{:type proto/QTDIR :version 0

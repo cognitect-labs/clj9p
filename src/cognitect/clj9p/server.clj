@@ -384,6 +384,12 @@
      :gid "user"
      :muid "user"}))
 
+(defn stub-output-fn [output-fcall]
+  (fn [ctx qid]
+    (assoc ctx
+           :output-fcall (merge (:input-fcall ctx)
+                                output-fcall))))
+
 (defn stat-faker
   "A helper for faking stat calls"
   [ctx qid]
