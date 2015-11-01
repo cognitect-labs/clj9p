@@ -319,7 +319,8 @@
                       proto/version)
            :uidnum proto/UIDUNDEF
            :gidnum proto/UIDUNDEF
-           :muidnum proto/UIDUNDEF} base-map))
+           :muidnum proto/UIDUNDEF}
+          base-map))
   ([k & vkv-pairs]
    {:pre [(keyword? k)]}
    (fcall (apply hash-map k vkv-pairs))))
@@ -530,12 +531,15 @@
       (#{:tversion :rversion} fcall-type) (assoc fcall-map
                                                  :msize (buff/read-int buffer)
                                                  :version (read-len-string buffer))
-      (= fcall-type :tauth) (merge fcall-map
-                                   {:afid (buff/read-int buffer)
-                                    :uname (read-len-string buffer)
-                                    :aname (read-len-string buffer)}
+      (= fcall-type :tauth) (let [afid (buff/read-int buffer)
+                                  uname (read-len-string buffer)
+                                  aname (read-len-string buffer)]
+                             (merge fcall-map
+                                   {:afid afid
+                                    :uname uname
+                                    :aname aname}
                                    (when (:dot-u fcall-map)
-                                     {:uidnum (buff/read-int buffer)}))
+                                     {:uidnum (buff/read-int buffer)})))
       (= fcall-type :rauth) (assoc fcall-map
                                    :aqid (read-qid buffer))
       (= fcall-type :rerror) (merge fcall-map
@@ -544,13 +548,17 @@
                                      {:errno (buff/read-int buffer)}))
       (= fcall-type :tflush) (assoc fcall-map
                                     :oldtag (buff/read-short buffer))
-      (= fcall-type :tattach) (merge fcall-map
-                                     {:fid (buff/read-int buffer)
-                                      :afid (buff/read-int buffer)
-                                      :uname (read-len-string buffer)
-                                      :aname (read-len-string buffer)}
-                                     (when (:dot-u fcall-map)
-                                       {:uidnum (buff/read-int buffer)}))
+      (= fcall-type :tattach) (let [fid (buff/read-int buffer)
+                                    afid (buff/read-int buffer)
+                                    uname (read-len-string buffer)
+                                    aname (read-len-string buffer)]
+                                (merge fcall-map
+                                       {:fid fid
+                                        :afid afid
+                                        :uname uname
+                                        :aname aname}
+                                       (when (:dot-u fcall-map)
+                                         {:uidnum (buff/read-int buffer)})))
       (= fcall-type :rattach) (assoc fcall-map
                                      :qid (read-qid buffer))
       (= fcall-type :twalk) (let [fid (buff/read-int buffer)
@@ -570,13 +578,17 @@
       (#{:ropen :rcreate} fcall-type) (assoc fcall-map
                                              :qid (read-qid buffer)
                                              :iounit (buff/read-int buffer))
-      (= fcall-type :tcreate) (merge fcall-map
-                                     {:fid (buff/read-int buffer)
-                                      :name (read-len-string buffer)
-                                      :perm (buff/read-int buffer)
-                                      :mode (buff/read-byte buffer)}
+      (= fcall-type :tcreate) (let [fid (buff/read-int buffer)
+                                    name (read-len-string buffer)
+                                    perm (buff/read-int buffer)
+                                    mode (buff/read-byte buffer)]
+                                (merge fcall-map
+                                     {:fid fid
+                                      :name name
+                                      :perm perm
+                                      :mode mode}
                                      (when (:dot-u fcall-map)
-                                       {:extension (read-len-string buffer)}))
+                                       {:extension (read-len-string buffer)})))
       (= fcall-type :tread) (assoc fcall-map
                                    :fid (buff/read-int buffer)
                                    :offset (buff/read-long buffer)
