@@ -4,7 +4,7 @@
   :dependencies [[org.clojure/clojure "1.8.0-beta1"]
                  [org.clojure/core.async "0.1.346.0-17112a-alpha" :exclusions [[org.clojure/tools.analyzer.jvm]]]
                  [org.clojure/tools.analyzer.jvm "0.6.7"]
-                 [io.netty/netty-all "4.0.30.Final"]]
+                 [io.netty/netty-all "4.0.32.Final"]]
   :global-vars {*warn-on-reflection* true
                 *unchecked-math* :warn-on-boxed
                 ;*compiler-options* {:disable-locals-clearing true}
