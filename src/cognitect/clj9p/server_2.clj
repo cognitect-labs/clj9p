@@ -22,14 +22,6 @@
 (def sconj (fnil conj #{}))
 (def sdisj (fnil disj #{}))
 
-(def  qfmap       {})
-(defn qf-assign   [qfmap qid client fid] (update-in qfmap [qid client] sconj fid))
-(defn qf-unassign [qfmap qid client fid] (update-in qfmap [qid client] sdisj fid))
-
-(def  fqmap       {})
-(def  fq-assign   assoc)
-(def  fq-unassign dissoc)
-
 (extend-protocol n9p/Remote
   nil
   (get-remote-id [t] t)
@@ -42,47 +34,22 @@
   (get-remote-id [t]
     (.remoteAddress t)))
 
-;; There are two parts to the state:
-;;  - Common across all clients
-;;  - Per-client
-;;
-;; Per-client state is all about fids. Each client can assign its own
-;; fids. We need to keep track of when a fid is in use and when it
-;; becomes unused. Handlers can return a modified client state.
-;;
-;; Server state is whatever the server needs it to be. It's just an
-;; atom. Handlers cannot directly change the server state. They must
-;; return a mutator that will be applied to the server state with
-;; swap! once the request is handled.
+;; QidMapping m
+;; ->qid :: m -> r -> Qid
+;; qid-> :: m -> Qid -> r
 
-;; Facets of a 9p server
-;; 1. Metadata for resource
-;; 1.a. user
-;; 1.b. groups
-;; 1.c. permission
-;; 1.d. mtime
-;; 1.e. ctime
-;; 1.f. dir?
-;; 2. Qid mapping
-;; 2.a. qid for resource
-;; 2.b. resource for qid
-;; 3. hierarchy
-;; 3.a. resource -> resources
-;; 3.b. resource -> parent resource
-;; 3.c. root resource
-;; 4. create resource
-;; 5. remove resource
-;; 7. read of a file resource
-;; 8. read of a dir resource
-;; 9. mutex opens
+;; Directory
+;; lookup :: String -> Principal
 
 ;; Permission p
 ;; Principal = User u | Group g | Other
-;; readable? :: p -> Principal -> Bool
-;; writable? :: p -> Principal -> Bool
-;; executable? :: p -> Principal -> Bool
-;; user :: p -> User
-;; groups :: p -> [Group]
+;; readable? :: Permission -> Principal -> Bool
+;; writable? :: Permission -> Principal -> Bool
+;; executable? :: Permission -> Principal -> Bool
+;; user :: Permission -> User
+;; group :: Permission -> Group
+;; data operation = Read | Write | Execute
+;; attempt :: (Permissioned r, Operation op) => r -> Principal -> op -> ( r -> x ) -> x | Error
 
 ;; Hierarchy h
 ;; root :: h -> e
@@ -90,23 +57,31 @@
 ;; parent :: h -> e -> Maybe e
 ;; children :: h -> e -> [e]
 
+;; class Permissioned r where
+;;    permission :: r -> Permission
+
 ;; Filesystem fs
 ;; Resource r (type tbd by the fs)
-;; permission :: fs -> r -> Permission
-;; change-permission :: fs -> r -> Permission -> Maybe fs
-;; read :: fs -> r -> Principal -> int -> Maybe buffer
-;; write :: fs -> r -> Principal -> int -> buffer -> Maybe (fs, int)
-;; truncate :: fs -> r -> Principal -> Maybe fs
-;; delete :: fs -> r -> Prinicpal -> Maybe fs
-;; directory? :: fs -> r -> Bool
-;; size :: fs -> r -> Long
-;; modified :: fs -> r -> Instance
-;; created :: fs -> r -> Instance
+;; random-access? :: r -> Bool
+;; exclusive? :: r -> Bool
+;; directory? :: r -> Bool
+;; size :: r -> Long
+;; modified :: r -> Instant
+;; created :: r -> Instant
+;; permission :: r -> Permission
+;; read  :: r -> int -> buffer
 
-;; ExclusionZone z
+;; change-permission :: FileSystem r -> r -> (FileSystem r, r)
+;; create :: FileSystem r -> String -> (FileSystem r, r)
+;; create-directory :: FileSystem r -> String -> (FileSystem r, r)
+;; write :: FileSystem r -> r -> int -> buffer -> (FileSystem r, int)
+;; truncate :: FileSystem r -> r -> (FileSystem r, r)
+;; delete :: FileSystem r -> r -> (FileSystem r, r)
+
+;; ExclusionRealm er
 ;; Exclusive e
-;; lock :: z -> e -> (z, Lock e)
-;; unlock :: z -> Lock e -> z
+;; lock :: ExclusionRealm -> Exclusive -> (ExclusionRealm, Lock e)
+;; unlock :: Lock e -> ExclusionRealm
 
 (defprotocol Handler
   (dispatch [this request] "Returns a channel that will deliver the result"))
@@ -123,7 +98,7 @@
 
 (defn- hcontext-lookup-fid   [context fid]    (-> context :client-state :fids (get fid)))
 
-(def empty-client {:fids fqmap})
+(def empty-client {:fids {}})
 
 (defn- update-client-state!
   [clients remote ctx]
