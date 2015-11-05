@@ -1,23 +1,23 @@
 (ns cognitect.clj9p.example
-  (:require [cognitect.clj9p.server :as server]
+  (:require [cognitect.clj9p.server-2 :as server-2]
             [cognitect.clj9p.proto :as proto]))
 
 ;; NOTES:
 ;; ----------
 ;; You should prefer to send transit-msgpack instead of String data
 
-(def serv (server/server {:app {:greeting "Hello World!"}
-                          :ops {:stat server/stat-faker
-                                :wstat (server/stub-output-fn {:type :rwstat})
-                                :walk server/path-walker
-                                :read server/interop-dirreader}
+(def serv (server-2/server {:app {:greeting "Hello World!"}
+                          :ops {:stat server-2/stat-faker
+                                :wstat (server-2/stub-output-fn {:type :rwstat})
+                                :walk server-2/path-walker
+                                :read server-2/interop-dirreader}
                           :fs {{:type proto/QTDIR :version 0
                                 :path "/interjections"} {}
                                {:type proto/QTFILE :version 0
                                 :path "/interjections/hello"} {:read (fn [context qid]
                                                                        (let [greeting (get-in context [:server-state :app :greeting])
                                                                              greeting-seeked (subs greeting (get-in context [:input-fcall :offset]))]
-                                                                         (server/make-resp context {:type :rread
+                                                                         (server-2/make-resp context {:type :rread
                                                                                                     :data greeting-seeked})))
                                                                :write (fn [context qid]
                                                                         (let [current-greeting (get-in context [:server-state :app :greeting])
@@ -29,29 +29,30 @@
                                                                           (-> context
                                                                               (assoc :server-state-updater (fn [state]
                                                                                                              (assoc-in state [:app :greeting] new-greeting)))
-                                                                              (server/make-resp {:type :rwrite
+                                                                              (server-2/make-resp {:type :rwrite
                                                                                                  :count (count new-greeting)}))))}
                                {:type proto/QTFILE :version 0
                                 :path "/interjections/goodbye"} {:read (fn [context qid]
-                                                                         (server/make-resp context {:type :rread
+                                                                         (server-2/make-resp context {:type :rread
                                                                                                     :data "Goodbye!"}))}}}))
 
-(def tcp-serv (server/tcp-server {:flush-every 0
-                                  :backlog 100
-                                  :reuseaddr true
-                                  :port 9090
-                                  :host "127.0.0.1"
-                                  :join? false}
-                                 serv))
+(def tcp-serv (server-2/tcp-server {:flush-every 0
+                                    :backlog 100
+                                    :reuseaddr true
+                                    :port 9090
+                                    :host "127.0.0.1"
+                                    :join? false}
+                                   serv))
 
 (defn start! []
-  (require '[cognitect.net.netty.server])
+  (require '[cognitect.net.netty.server :as netty])
   (cognitect.net.netty.server/start tcp-serv))
 
 (comment
-  (start!)
+  (def srv  (start!))
+  (netty/stop srv)
 
-  (keys  (:client-fids @(:state serv)))
+  (keys  @(:client-state srv))
 
   (require '[cognitect.clj9p.client :as clj9p] :reload)
   (def cl (clj9p/client))

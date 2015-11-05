@@ -1,5 +1,6 @@
 (ns cognitect.clj9p.io-test
-  (:require [clojure.test :refer :all]
+  (:require [clojure.core.async :as async]
+            [clojure.test :refer :all]
             [cognitect.clj9p.io :as io]
             [cognitect.clj9p.proto :as proto]))
 
@@ -15,6 +16,26 @@
    (let [expected (io/fcall fcall-map)
          actual (round-trip expected buffer)]
      (= (apply dissoc actual :original-size dissoc-keys) expected))))
+
+(defn exception? [x] (instance? Throwable x))
+(def timeout-error {:error :timeout})
+(defn timeout? [x] (= x timeout-error))
+
+(defn subset? [lhs rhs] (= lhs (select-keys rhs (keys lhs))))
+
+(defn round-trip-channels?
+  ([fcall-map]
+   (let [fcall     (io/fcall fcall-map)
+         encode-ch (async/chan 1 io/encode-fcall-xf (fn [^Throwable t] t))
+         decode-ch (async/chan 1 io/decode-fcall-xf (fn [^Throwable t] t))
+         result    (promise)]
+     (async/pipe encode-ch decode-ch)
+     (async/put! encode-ch fcall-map)
+     (async/take! decode-ch (fn [v] (deliver result v)))
+     (let [actual (deref result 100 timeout-error)]
+       (is (not (exception? actual)))
+       (is (not (timeout? actual)))
+       (is (subset? fcall actual))))))
 
 (deftest round-trip-encoding
   (let [buffer (io/default-buffer)]
@@ -49,4 +70,3 @@
          actual (round-trip expected buffer)]
      (is (= (mapv #(dissoc % :atime :mtime :statsz) (:stat actual))
             (mapv #(dissoc % :atime :mtime :statsz) (:stat expected))))))))
-
