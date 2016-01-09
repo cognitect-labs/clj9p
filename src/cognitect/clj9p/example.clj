@@ -94,14 +94,20 @@
 
   (clj9p/stat cl "/nodes")
   (clj9p/stat cl "/nodes/interjections")
+  (walk cl "/base/interjections/hello")
   (map :name (clj9p/ls cl "/nodes"))
   (map :name (clj9p/ls cl "/nodes/interjections"))
   (clj9p/read-str cl "/nodes/interjections/hello")
   (clj9p/write cl "/nodes/interjections/hello" "Hi!")
+  (read cl "/base/interjections/NOTHING") ;; Should be an error - no file found
+  (touch cl "/base/interjections/another-greeting") ;; Should be an error - No create function
+  (write cl "/base/cpu" "(inc 2)")
+  (read-str cl "/base/cpu")
 
   (:fs (deref (:state cl)))
   (clj9p/lsofids cl)
   (clj9p/lsof cl)
+  (unmount-all! cl)
 
   (clj9p/close cl "/nodes/interjections")
 
