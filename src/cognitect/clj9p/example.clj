@@ -37,29 +37,63 @@
                                                                                                     :data "Goodbye!"}))}}}))
 
 (def tcp-serv (server/tcp-server {:flush-every 0
-                                    :backlog 100
-                                    :reuseaddr true
-                                    :port 9090
-                                    :host "127.0.0.1"
-                                    :join? false}
-                                   serv))
+                                  :backlog 100
+                                  :reuseaddr true
+                                  :port 9090
+                                  :host "127.0.0.1"
+                                  :join? false}
+                                 serv))
 
 (defn start! []
   (require '[cognitect.net.netty.server :as netty])
   (cognitect.net.netty.server/start tcp-serv))
 
 (comment
-  (def srv  (start!))
+  ;; Server 1 -- Remote
+  (def srv (start!))
   (netty/stop srv)
+  ;; Server 2 -- Local-only
+  (def srv2 (server/server {:app {:scratchpad {}}
+                            :ops {:stat server/stat-faker
+                                  :walk server/path-walker
+                                  :read server/interop-dirreader}
+                            :fs {{:type proto/QTFILE
+                                  :path "/cpu"} {:read (fn [context qid]
+                                                         (let [client-addr (:cognitect.clj9p.server/remote-addr context)
+                                                               repl-result (get-in context [:server-state :app :scratchpad client-addr] "")]
+                                                           (server/make-resp context {:type :rread
+                                                                                      :data repl-result})))
+                                                 :write (fn [context qid]
+                                                          (let [data (get-in context [:input-fcall :data] "nil")
+                                                                read-input (read-string
+                                                                             (if (string? data) data (String. data "UTF-8")) )
+                                                                eval-result (str (eval read-input))
+                                                                client-addr (:cognitect.clj9p.server/remote-addr context)]
+                                                            (-> context
+                                                                (assoc-in [:server-state :app :scratchpad client-addr]
+                                                                          eval-result)
+                                                                (server/make-resp {:type :rwrite
+                                                                                   :count (count data)}))))}
+                                 {:type proto/QTDIR
+                                  :path "/interjections"} {}
+                                 {:type proto/QTFILE
+                                  :path "/interjections/pardon"} {:read (fn [context qid]
+                                                                          (server/make-resp context {:type :rread
+                                                                                                     :data "Pardon me"}))}}}))
 
-  (keys  @(:client-state srv))
+
+  (keys @(:state srv))
 
   (require '[cognitect.clj9p.client :as clj9p] :reload)
   (def cl (clj9p/client))
-  (clj9p/mount cl {"/nodes" [(clj9p/tcp-connect {:host "127.0.0.1" :port 9090})]})
+  ;(clj9p/mount cl {"/nodes" [(clj9p/tcp-connect {:host "127.0.0.1" :port 9090})]})
+  (clj9p/mount cl {"/nodes" [(clj9p/tcp-connect {:host "127.0.0.1" :port 9090})
+                             [(:server-in srv2) (:server-out srv2)]]})
   ;; To use the channels directly, you need to comment out `tcp-serv` above
   ;(clj9p/mount cl {"/nodes" [[(:server-in serv) (:server-out serv)]]})
 
+  (clj9p/stat cl "/nodes")
+  (clj9p/stat cl "/nodes/interjections")
   (map :name (clj9p/ls cl "/nodes"))
   (map :name (clj9p/ls cl "/nodes/interjections"))
   (clj9p/read-str cl "/nodes/interjections/hello")
@@ -70,5 +104,11 @@
   (clj9p/lsof cl)
 
   (clj9p/close cl "/nodes/interjections")
+
+  ;; 9pserv.py has /nodes/hello and /nodes/goodbye
+
+  (clj9p/open cl "/nodes/hello")
+  (clj9p/read-str cl "/nodes/hello")
+  (clj9p/close cl "/nodes/hello")
 
   )
