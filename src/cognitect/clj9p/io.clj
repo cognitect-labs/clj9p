@@ -30,11 +30,11 @@
   "This creates a Buffer suitable for use with encoding/decoding fcalls,
   but one should prefer using PooledByteBufAllocator from Netty (with direct Buffers only)"
   ([]
-   (.directBuffer PooledByteBufAllocator/DEFAULT))
+   (buff/ensure-little-endian (.directBuffer PooledByteBufAllocator/DEFAULT)))
   ([initial-byte-array]
    (if (instance? ByteBuf initial-byte-array)
-     initial-byte-array ;; Caller assumed Byte Arrays, but was operating in-place
-     (buff/write-byte-array (.directBuffer PooledByteBufAllocator/DEFAULT) initial-byte-array))))
+     (buff/ensure-little-endian initial-byte-array) ;; Caller assumed Byte Arrays, but was operating in-place
+     (buff/write-byte-array (buff/ensure-little-endian (.directBuffer PooledByteBufAllocator/DEFAULT)) initial-byte-array))))
 
 (extend-protocol buff/Length
 
@@ -178,7 +178,8 @@
     (buff/read-bytes buffer n)))
 
 (defn write-stats [^Buffer buffer stats encode-length?]
-  (let [statsz-processed (reduce (fn [{:keys [stats statsz-total]} {:keys [name uid gid muid extension] :as stat}]
+  (let [buffer (buff/ensure-little-endian buffer)
+        statsz-processed (reduce (fn [{:keys [stats statsz-total]} {:keys [name uid gid muid extension] :as stat}]
                                    (let [stat-sz (apply + (if extension 61 47) ;; base size values for standard vs dot-u
                                                         (if extension (count extension) 0) ;; If we're :dot-u, we'll have an extension
                                                         (map count [name uid gid muid]))]
@@ -398,6 +399,41 @@
                         :errno       ; Rerror
                         ;              Tcreate
                         :extension})
+
+(def fcall-keys
+  {:tversion [:type :tag :msize :version]
+   :rversion [:type :tag :msize :version]
+   :tauth    [:type :tag :afid :uname :aname]
+   :rauth    [:type :tag :aqid]
+   :rerror   [:type :tag :ename]
+   :tflush   [:type :tag :oldtag]
+   :rflush   [:type :tag]
+   :tattach  [:type :tag :afid :uname :aname]
+   :rattach  [:type :tag :qid]
+   :twalk    [:type :tag :fid :newfid :wname]
+   :rwalk    [:type :tag :wqid]
+   :topen    [:type :tag :fid :mode]
+   :ropen    [:type :tag :qid :iounit]
+   :topenfd  [:type :tag :fid :mode]
+   :ropenfd  [:type :tag :qid :iounit :unixfd]
+   :tcreate  [:type :tag :fid :name :perm :mode]
+   :rcreate  [:type :tag :qid :iounit]
+   :tread    [:type :tag :fid :offset :count]
+   :rread    [:type :tag :count :data]
+   :twrite   [:type :tag :fid :offset :count :data]
+   :rwrite   [:type :tag :count]
+   :tclunk   [:type :tag :fid]
+   :rclunk   [:type :tag]
+   :tremove  [:type :tag :fid]
+   :rremove  [:type :tag]
+   :tstat    [:type :tag :fid]
+   :rstat    [:type :tag :stat]
+   :twstat   [:type :tag :fid :stat]
+   :rwstat   [:type :tag]})
+
+(defn show-fcall
+  [fcall-map]
+  (pr-str (select-keys fcall-map (get fcall-keys (:type fcall-map) [:type :tag]))))
 
 ;; 9P has two types of messages: T-Messages and R-Messages.
 ;; From the RFC/Intro:
