@@ -45,6 +45,7 @@
   {:version proto/version
    :root-fid 1
    :next-fid 2
+   :open-fids {}
    :mounts {}
    :fs {}})
 
@@ -111,6 +112,12 @@
                            [path-or-mount])]
     (map #(blocking-call client % fcall-map) potential-mounts)))
 
+(defn attach [client mount-def path root-fid]
+  (let [attach-result (blocking-call client mount-def (io/fcall {:type :tattach :fid root-fid}))]
+    (when-not (get-in @(:state client) [:fs path :fid])
+            (swap! (:state client)
+                   assoc-in [:fs (subs path 1)] {:qid (:qid attach-result) :fid root-fid}))))
+
 (defn mount [client spec]
   ;; Register the mounts within our client
   (let [out-chan (:from-server client)
@@ -121,7 +128,8 @@
                                                     (mapv #(n9p/-mount % out-chan) v)
                                                     [(n9p/-mount v out-chan)]))))
                            {}
-                           spec)]
+                           spec)
+        root-fid (:root-fid @(:state client))]
     (swap! (:state client)
            update-in [:mounts] n9p/deep-merge new-mounts)
     ;; Version and attach each mount into the client's FS
@@ -131,12 +139,8 @@
               auth-resp (blocking-call client mount-def (io/fcall {:type :tauth
                                                                    :uname (System/getProperty "user.name")
                                                                    :aname ""
-                                                                   :afid proto/NOFID}))
-              ;; Always attach the root nodes as fid `:root-fid`
-              attach-result (blocking-call client mount-def (io/fcall {:type :tattach :fid (:root-fid @(:state client))}))]
-          (when-not (get-in @(:state client) [:fs base-path :qid])
-            (swap! (:state client)
-                   assoc-in [:fs (subs base-path 1)] {:qid (:qid attach-result) :fid 1})))))
+                                                                   :afid proto/NOFID}))]
+          (attach client mount-def base-path root-fid))))
     client))
 
 (defn clunk [client mount-def fid]
@@ -148,7 +152,7 @@
   A client may not be used after this call."
   [client]
   (doseq [mount (flatten (vals (:mounts client)))]
-    (clunk client mount 1)
+    (clunk client mount (:root-fid @(:state client)))
     (async/close! mount))
   (async/close! (:from-server client))
   (reset! (:state client) (:initial-state client))
@@ -163,33 +167,36 @@
 ;; Higher-level API - Blocking calls, always returns a value
 
 (defn force-walk
-  [client full-path]
-  (if-let [mount-path (find-mount-path client full-path)]
-    (let [server-path-parts (vec (remove empty? (string/split (str "/" (subs full-path (count mount-path))) #"/")))
-          state @(:state client)
-          newfid (:next-fid state)
-          walk-results (into [] (distinct
-                                 (lazy-blocking-call client
-                                                     mount-path
-                                                     (io/fcall {:type :twalk :fid 1 :newfid newfid :wname server-path-parts}))))
-          _ (when (every? #(= (:type %) :rerror) walk-results)
-              (throw (ex-info "Failed client walk" {:client client
-                                                    :path full-path
-                                                    :error-response walk-results})))
-          partial-fs (reduce (fn [fs-map [path-piece qid]]
-                               (let [new-parts (conj (:parts fs-map) path-piece)]
-                                 {:parts new-parts
-                                  :fs (assoc-in (:fs fs-map) new-parts {:qid qid})}))
-                             {:parts [(subs mount-path 1)]
-                              :fs {}}
-                             (distinct (mapcat #(map vector server-path-parts (:wqid %)) walk-results)))
-          updated-fs (assoc-in (:fs partial-fs) (conj (:parts partial-fs) :fid) newfid)
-          next-state (-> state
-                         (update :next-fid inc)
-                         (update :fs n9p/deep-merge updated-fs))]
-      (reset! (:state client) next-state)
-      client)
-    client))
+  ([client full-path]
+   (force-walk client full-path (:next-fid @(:state client)) (find-mount-path client full-path)))
+  ([client full-path newfid]
+   (force-walk client full-path newfid (find-mount-path client full-path)))
+  ([client full-path newfid mount-path]
+   (if mount-path
+     (let [server-path-parts (vec (remove empty? (string/split (str "/" (subs full-path (count mount-path))) #"/")))
+           state @(:state client)
+           walk-results (into [] (distinct
+                                   (lazy-blocking-call client
+                                                       mount-path
+                                                       (io/fcall {:type :twalk :fid (:root-fid state) :newfid newfid :wname server-path-parts}))))
+           _ (when (every? #(= (:type %) :rerror) walk-results)
+               (throw (ex-info "Failed client walk" {:client client
+                                                     :path full-path
+                                                     :error-response walk-results})))
+           partial-fs (reduce (fn [fs-map [path-piece qid]]
+                                (let [new-parts (conj (:parts fs-map) path-piece)]
+                                  {:parts new-parts
+                                   :fs (assoc-in (:fs fs-map) new-parts {:qid qid})}))
+                              {:parts [(subs mount-path 1)]
+                               :fs {}}
+                              (distinct (mapcat #(map vector server-path-parts (:wqid %)) walk-results)))
+           updated-fs (assoc-in (:fs partial-fs) (conj (:parts partial-fs) :fid) newfid)
+           next-state (-> state
+                          (update :next-fid inc) ;; just in case newfid was :next-fid
+                          (update :fs n9p/deep-merge updated-fs))]
+       (reset! (:state client) next-state)
+       client)
+     client)))
 
 (defn walk
   "Given a client map and a string of a full-path,
@@ -301,7 +308,7 @@
 
 (defn read-str
   ([client full-path]
-   (read-str client full-path 0 0))
+   (read-str client full-path io/default-message-size-bytes 0))
   ([client full-path byte-count]
    (read-str client full-path byte-count 0))
   ([client full-path byte-count offset]
@@ -347,15 +354,21 @@
    (let [walked (walk client full-path)
          mount-path (find-mount-path client full-path) ;; We know it's good because the walk passed
          fid (path-fid client full-path)
-         open-map (or (get-in @(:state client) [:open-fids fid])
+         old-open (get-in @(:state client) [:open-fids fid])
+         open-map (or old-open
                       (do (open client full-path)
                           (get-in @(:state client) [:open-fids fid])))
         qid (path-qid client full-path)]
     (if (= proto/QTDIR (:type qid))
-      (let [read-data (full-read client full-path 0 0)
-            _ (closefid client mount-path fid)]
-        (flatten (map dir-read-fn read-data))
-        #_(try (into []
+      (let [read-data (full-read client full-path io/default-message-size-bytes 0)
+            _ (closefid client mount-path fid)
+            ;; Rewalk to preseve the fid
+            _ (if (= fid (:root-fid @(:state client)))
+                (attach client mount-path full-path fid)
+                (force-walk client full-path fid mount-path))
+            _ (when old-open
+                (open client full-path (:mode old-open)))]
+        (try (into []
                    (vals
                      (reduce (fn [result e]
                               (if (result (:name e)) ;; If we already have a file by that name...
