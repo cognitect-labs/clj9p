@@ -15,12 +15,14 @@ def getSock(host, port):
 def main():
     args = sys.argv[1:]
     srv_host = args[0]
-    srv_port = args[1]
+    srv_port = int(args[1])
     sock = getSock(srv_host, srv_port)
+    print "Created 9P socket connection...", sock
     user = os.environ.get('USER')
     authsrv = None
     authmode = 'none'
     privkey = None
+    passwd = None
     creds = py9p.Credentials(user, authmode, passwd, privkey)
     print "Version, Auth, and Attach..."
     client = CmdClient(sock, creds, authsrv)
