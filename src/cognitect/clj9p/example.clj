@@ -99,10 +99,10 @@
   (map :name (clj9p/ls cl "/nodes/interjections"))
   (clj9p/read-str cl "/nodes/interjections/hello")
   (clj9p/write cl "/nodes/interjections/hello" "Hi!")
-  (read cl "/base/interjections/NOTHING") ;; Should be an error - no file found
-  (touch cl "/base/interjections/another-greeting") ;; Should be an error - No create function
-  (write cl "/base/cpu" "(inc 2)")
-  (read-str cl "/base/cpu")
+  (read cl "/nodes/interjections/NOTHING") ;; Should be an error - no file found
+  (touch cl "/nodes/interjections/another-greeting") ;; Should be an error - No create function
+  (write cl "/nodes/cpu" "(inc 2)")
+  (read-str cl "/nodes/cpu")
 
   (:fs (deref (:state cl)))
   (clj9p/lsofids cl)
