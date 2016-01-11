@@ -60,6 +60,7 @@
                             :fs {{:type proto/QTFILE
                                   :path "/cpu"} {:read (fn [context qid]
                                                          (let [client-addr (:cognitect.clj9p.server/remote-addr context)
+                                                               _ (println "client addr:" client-addr)
                                                                repl-result (get-in context [:server-state :app :scratchpad client-addr] "")]
                                                            (server/make-resp context {:type :rread
                                                                                       :data repl-result})))
@@ -70,8 +71,9 @@
                                                                 eval-result (str (eval read-input))
                                                                 client-addr (:cognitect.clj9p.server/remote-addr context)]
                                                             (-> context
-                                                                (assoc-in [:server-state :app :scratchpad client-addr]
-                                                                          eval-result)
+                                                                (assoc :server-state-updater (fn [state]
+                                                                                               (assoc-in state [:app :scratchpad client-addr]
+                                                                                                         eval-result)))
                                                                 (server/make-resp {:type :rwrite
                                                                                    :count (count data)}))))}
                                  {:type proto/QTDIR
@@ -99,10 +101,10 @@
   (map :name (clj9p/ls cl "/nodes/interjections"))
   (clj9p/read-str cl "/nodes/interjections/hello")
   (clj9p/write cl "/nodes/interjections/hello" "Hi!")
-  (read cl "/nodes/interjections/NOTHING") ;; Should be an error - no file found
-  (touch cl "/nodes/interjections/another-greeting") ;; Should be an error - No create function
-  (write cl "/nodes/cpu" "(inc 2)")
-  (read-str cl "/nodes/cpu")
+  (clj9p/read cl "/nodes/interjections/NOTHING") ;; Should be an error - no file found
+  (clj9p/touch cl "/nodes/interjections/another-greeting") ;; Should be an error - No create function
+  (clj9p/write cl "/nodes/cpu" "(inc 2)")
+  (clj9p/read-str cl "/nodes/cpu")
 
   (:fs (deref (:state cl)))
   (clj9p/lsofids cl)

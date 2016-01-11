@@ -219,7 +219,11 @@
                                                           :full-path full-path
                                                           :error-response resp}))
       (do (swap! (:state client) update-in [:open-fids] dissoc fid)
-          (swap! (:state client) update-in (conj (rest (string/split full-path #"/")) :fs) dissoc :fid)))
+          (swap! (:state client) update-in (conj (rest (string/split full-path #"/")) :fs) dissoc :fid)
+          ;; Re-establish the FID.  If the FID was a Root, reattach it.
+          (if (= fid (:root-fid @(:state client)))
+            (attach client mount-path full-path fid)
+            (force-walk client full-path fid mount-path))))
     client))
 
 (defn close [client full-path]
@@ -362,10 +366,6 @@
     (if (= proto/QTDIR (:type qid))
       (let [read-data (full-read client full-path io/default-message-size-bytes 0)
             _ (closefid client mount-path fid)
-            ;; Rewalk to preseve the fid
-            _ (if (= fid (:root-fid @(:state client)))
-                (attach client mount-path full-path fid)
-                (force-walk client full-path fid mount-path))
             _ (when old-open
                 (open client full-path (:mode old-open)))]
         (try (into []
