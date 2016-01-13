@@ -97,12 +97,19 @@
   (clj9p/stat cl "/nodes")
   (clj9p/stat cl "/nodes/interjections")
   (walk cl "/base/interjections/hello")
+
   (map :name (clj9p/ls cl "/nodes"))
   (map :name (clj9p/ls cl "/nodes/interjections"))
+  (clj9p/directory? cl "/nodes/interjections")
+  (clj9p/directory? cl "/nodes/interjections/hello")
+  (clj9p/file? cl "/nodes/interjections/hello")
+  (clj9p/file-type cl "/nodes/interjections/hello")
+  (clj9p/mode cl "/nodes/interjections")
+
   (clj9p/read-str cl "/nodes/interjections/hello")
   (clj9p/write cl "/nodes/interjections/hello" "Hi!")
   (clj9p/read cl "/nodes/interjections/NOTHING") ;; Should be an error - no file found
-  (clj9p/touch cl "/nodes/interjections/another-greeting") ;; Should be an error - No create function
+  (clj9p/touch cl "/nodes/interjections/another-greeting") ;; Error, Dir doesn't have perms set
   (clj9p/write cl "/nodes/cpu" "(inc 2)")
   (clj9p/read-str cl "/nodes/cpu")
 

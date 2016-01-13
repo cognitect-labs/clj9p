@@ -317,7 +317,7 @@
    (read-str client full-path byte-count 0))
   ([client full-path byte-count offset]
    (let [data (read client full-path byte-count offset)]
-     (if (string? data) data (String. data "UTF-8")))))
+     (if (string? data) data (String. ^bytes data "UTF-8")))))
 
 (defn write
   ([client full-path data]
@@ -344,7 +344,7 @@
 (defn edn-read-fn [x]
   (edn/read-string (if (string? x)
                      x
-                     (some-> x (String. "UTF-8")))))
+                     (and x (String. ^bytes x "UTF-8")))))
 
 (defn binstat-read-fn [x]
   (when x
@@ -383,7 +383,6 @@
       (and (path-qid client full-path)
            (last (string/split full-path #"/")))))))
 
-;; TODO: Correctly handle the create based on walk results: https://swtch.com/plan9port/man/man9/open.html
 (defn touch
   ([client full-path]
    (touch client full-path 0644 1))
@@ -393,12 +392,16 @@
    (let [file-name (subs full-path (string/last-index-of full-path "/"))
          base-path (subs full-path 0 (string/last-index-of full-path "/"))
          walked (walk client base-path)
-         mount-path (find-mount-path client full-path) ;; We know it's good because the walk passed
+         mount-path (find-mount-path client base-path) ;; We know it's good because the walk passed
          fid (path-fid client base-path)
-         open-map (or (get-in @(:state client) [:open-fids fid])
-                      (do (open client full-path proto/OWRITE)
+         old-open (get-in @(:state client) [:open-fids fid])
+         open-map (or old-open
+                      (do (open client base-path proto/OWRITE)
                           (get-in @(:state client) [:open-fids fid])))
-         resp (resolving-blocking-call client mount-path (io/fcall {:type :tcreate :fid fid :name file-name :mode mode :perm permission}))]
+         resp (resolving-blocking-call client mount-path (io/fcall {:type :tcreate :fid fid :name file-name :mode mode :perm permission}))
+         _ (closefid client mount-path fid)
+         _ (when old-open
+                (open client base-path (:mode old-open)))]
      (if (= (:type resp) :rerror)
        (throw (ex-info "Failed client create" {:client client
                                                :path full-path
@@ -416,7 +419,6 @@
 (defn fsiounit [client full-path]
   (when-let [opened-fd (get-in @(:state client) [:open-fids (path-fid client full-path)])]
     (:iounit opened-fd)))
-
 
 
 (defn file-type [client full-path]
