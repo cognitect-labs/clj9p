@@ -299,6 +299,7 @@
     (cond
       (nil? fid)                     (unknown-fid context input-fid)
       (not= (:open-mode fid) -1)     (rerror context "Botched 9P call: Cannot create in a non-open'd descriptor")
+      (some #{"." ".."} (:name input-fcall)) (rerror context "Cannot create a file named '.' or '..'")
 
       (not (directory? qid))         (rerror context "Cannot create in a non-directory")
       file-create                    (file-create context qid)
