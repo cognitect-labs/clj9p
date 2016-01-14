@@ -427,10 +427,10 @@
     (:type qid)))
 
 (defn directory? [client full-path]
-  (= proto/QTDIR (file-type client full-path)))
+  (io/directory? (file-type client full-path)))
 
 (defn file? [client full-path]
-  (some? (#{proto/QTFILE proto/QTAPPEND proto/QTTMP} (file-type client full-path))))
+  (io/file? (file-type client full-path)))
 
 (defn mode
   ([stat-map]

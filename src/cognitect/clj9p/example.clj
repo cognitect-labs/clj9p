@@ -60,7 +60,6 @@
                             :fs {{:type proto/QTFILE
                                   :path "/cpu"} {:read (fn [context qid]
                                                          (let [client-addr (:cognitect.clj9p.server/remote-addr context)
-                                                               _ (println "client addr:" client-addr)
                                                                repl-result (get-in context [:server-state :app :scratchpad client-addr] "")]
                                                            (server/make-resp context {:type :rread
                                                                                       :data repl-result})))
@@ -85,10 +84,12 @@
 
 
   (keys @(:state srv))
+  (:fs @(:state srv))
 
   (require '[cognitect.clj9p.client :as clj9p] :reload)
   (def cl (clj9p/client))
   ;(clj9p/mount cl {"/nodes" [(clj9p/tcp-connect {:host "127.0.0.1" :port 9090})]})
+  ;(clj9p/mount cl {"/nodes" [[(:server-in srv2) (:server-out srv2)]]})
   (clj9p/mount cl {"/nodes" [(clj9p/tcp-connect {:host "127.0.0.1" :port 9090})
                              [(:server-in srv2) (:server-out srv2)]]})
   ;; To use the channels directly, you need to comment out `tcp-serv` above
@@ -96,7 +97,7 @@
 
   (clj9p/stat cl "/nodes")
   (clj9p/stat cl "/nodes/interjections")
-  (walk cl "/base/interjections/hello")
+  (clj9p/walk cl "/base/interjections/hello")
 
   (map :name (clj9p/ls cl "/nodes"))
   (map :name (clj9p/ls cl "/nodes/interjections"))

@@ -267,7 +267,6 @@
 
 (defn now [] (.getTime ^Date (Date.)))
 
-;; TODO: This mode calculation seems a little off to me...
 (def mode-bits ["---" "--x" "-w-" "-wx" "r--" "r-x" "rw-" "rwx"])
 (defn mode-str [mode-num]
   (let [mode-fn (fn [shift-num]
@@ -655,6 +654,24 @@
    (fn [^Buffer buffer]
      (decode-fcall! buffer))))
 
+(defn directory? [qid-type]
+  (if (map? qid-type)
+    (directory? (:type qid-type))
+    (pos? (bit-and qid-type proto/QTDIR))))
+
+(defn file? [qid-type]
+  (if (map? qid-type)
+    (file? (:type qid-type))
+    (or (= qid-type proto/QTFILE) ;; Protect against mode bit '0'
+        (pos? (bit-and qid-type proto/QTFILE))
+        (pos? (bit-and qid-type proto/QTAPPEND))
+        (pos? (bit-and qid-type proto/QTTMP)))))
+
+(defn symlink? [qid-type]
+  (if (map? qid-type)
+    (symlink? (:type qid-type))
+    (pos? (bit-and qid-type proto/QTSYMLINK))))
+
 (defn permission?
   "Return true if some stat-like map allows some specific permission for uid,
   otherwise false.
@@ -672,6 +689,9 @@
            (do (vreset! m (bit-or @m (bit-and (bit-shift-right mode 3) 7)))
                (= target-perm (bit-and target-perm @m)))) true
       :else false)))
+
+(defn apply-permissions [initial-mode additional-modes]
+  (apply bit-or initial-mode additional-modes))
 
 (defn open->access
   "Convert an Open-style permission into an Access-style permission"

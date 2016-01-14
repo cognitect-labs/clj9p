@@ -158,9 +158,6 @@
   (println "Fcall for unknown fid" (:input-fcall ctx))
   (rerror ctx (str "Unknown fid: " fid)))
 
-(defn directory? [qid]
-  (pos? (bit-and (:type qid) proto/QTDIR)))
-
 (defn- client-assign-fid [client-state fid uname qid]
   (assoc-in client-state [:fids fid] {:uname     uname
                                       :qid       qid
@@ -236,7 +233,7 @@
           (rerror context "Cannot clone an open fid"))
 
       (and (pos? (count (:wname input-fcall)))
-           (not (directory? qid)))
+           (not (io/directory? qid)))
       (rerror context "Cannot walk in non-directory")
 
       (and (not= input-fid input-newfid) newfid)
@@ -270,7 +267,7 @@
       (rerror context "Botched 9p call: FID is already in an open state")
 
       ;; TODO: Also force access permissions
-      (and (directory? qid)
+      (and (io/directory? qid)
            (not= (bit-and (:mode input-fcall)
                           (bit-not proto/ORCLOSE)) proto/OREAD))
       (rerror context "FD is a directory, mode not allowed")
@@ -301,7 +298,7 @@
       (not= (:open-mode fid) -1)     (rerror context "Botched 9P call: Cannot create in a non-open'd descriptor")
       (some #{"." ".."} (:name input-fcall)) (rerror context "Cannot create a file named '.' or '..'")
 
-      (not (directory? qid))         (rerror context "Cannot create in a non-directory")
+      (not (io/directory? qid))         (rerror context "Cannot create in a non-directory")
       file-create                    (file-create context qid)
       :else                          (rerror context "No create function"))))
 
@@ -454,9 +451,10 @@
      :dev 0
      :statsz 0
      :qid qid
-     :mode (if (= (:type qid) proto/QTDIR)
+     :mode (if (io/directory? qid)
              (+ ^long proto/DMDIR 0755)
              0644)
+     ;:mode (:type qid)
      :atime (:atime default-initial-state)
      :mtime (io/now)
      :length 0 ;; 0 Length is used for directories and devices/services
@@ -539,7 +537,7 @@
 
 (defn clj-dirreader
   [ctx qid]
-  (if-let [child-qids (and (directory? qid)
+  (if-let [child-qids (and (io/directory? qid)
                            (qid-children-qids (get-in ctx [:server-state :fs]) qid))]
     (let [stat-str (pr-str (mapv #(fake-stat ctx %) child-qids))]
       (make-resp ctx {:type :rread
@@ -550,7 +548,7 @@
 
 (defn interop-dirreader
   [ctx qid]
-  (if-let [child-qids (and (directory? qid)
+  (if-let [child-qids (and (io/directory? qid)
                            (qid-children-qids (get-in ctx [:server-state :fs]) qid))]
     (let [buffer (io/little-endian (io/default-buffer))
           stat-buffer (io/write-stats buffer (mapv #(fake-stat ctx %) child-qids) false)
