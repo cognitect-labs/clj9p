@@ -441,7 +441,7 @@
        first
        mode)))
 
-(defn tcp-connect [client-options]
+(defn remote-connect [channel-class client-options]
   (let [to-server (async/chan 10)
         from-server (async/chan 10)
         framer (LengthFieldBasedFrameDecoder. ByteOrder/LITTLE_ENDIAN
@@ -449,7 +449,7 @@
                                               0 4 -4 0
                                               true)
         clnt (nclient/client (merge client-options {:join? false})
-                             nclient/tcp-channel-class
+                             channel-class
                              [framer
                               {:channel-read (fn [ctx msg]
                                                (let [buffer (cast ByteBuf msg)
@@ -471,4 +471,13 @@
          (recur))
        (async/close! from-server)))
     [to-server from-server]))
+
+(defn tcp-connect [client-options]
+  (remote-connect nclient/tcp-channel-class client-options))
+
+(defn sctp-connect [client-options]
+  (remote-connect nclient/sctp-channel-class client-options))
+
+(defn udt-connect [client-options]
+  (remote-connect nclient/udt-channel-factory client-options))
 

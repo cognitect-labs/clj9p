@@ -654,6 +654,7 @@
 
 (def tcp-server #(netty-server netty/tcp-channel-class %1 %2))
 (def sctp-server #(netty-server netty/sctp-channel-class %1 %2))
+(def udt-server #(netty-server netty/udt-channel-factory %1 %2))
 
 (comment
 

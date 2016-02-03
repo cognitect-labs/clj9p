@@ -6,30 +6,30 @@
                              ChannelOption
                              EventLoopGroup)
            (io.netty.channel.nio NioEventLoopGroup)
-           (io.netty.bootstrap ServerBootstrap)
+           (io.netty.bootstrap ServerBootstrap
+                               ChannelFactory)
            (io.netty.buffer PooledByteBufAllocator)))
 
 ;; Common Channel Classes
 (def local-channel-class (util/maybe-class 'io.netty.channel.local.LocalServerChannel))
 (def tcp-channel-class   (util/maybe-class 'io.netty.channel.socket.nio.NioServerSocketChannel))
 (def sctp-channel-class  (util/maybe-class 'io.netty.channel.sctp.nio.NioSctpServerChannel))
+(def udt-channel-factory (and (util/maybe-class 'com.barchart.udt.nio.SelectorProviderUDT)
+                              (util/maybe-class 'com.barchart.udt.nio.SelectorUDT)
+                              (util/maybe-class 'io.netty.channel.udt.nio.NioUdtProvider 'BYTE_ACCEPTOR)))
 
-(defn- channel-class? [cls]
-  (and (class? cls) (some #{Channel} (supers cls))))
-
-(defn- event-loop-group
-  ([]         (NioEventLoopGroup.))
-  ([nthreads] (NioEventLoopGroup. nthreads)))
 
 (defn- configure-netty-bootstrap
   [^EventLoopGroup boss-group ^EventLoopGroup worker-group channel-class backlog reuseaddr chan-init]
-  (doto (ServerBootstrap.)
-    (.group boss-group worker-group)
-    (.channel channel-class)
-    (.option ChannelOption/SO_BACKLOG backlog)
-    (.option ChannelOption/SO_REUSEADDR reuseaddr)
-    (.childOption ChannelOption/ALLOCATOR PooledByteBufAllocator/DEFAULT)
-    (.childHandler chan-init)))
+  (let [bootstrap (doto (ServerBootstrap.)
+                    (.group boss-group worker-group)
+                    (.option ChannelOption/SO_BACKLOG backlog)
+                    (.option ChannelOption/SO_REUSEADDR reuseaddr)
+                    (.childOption ChannelOption/ALLOCATOR PooledByteBufAllocator/DEFAULT)
+                    (.childHandler chan-init))]
+    (if (util/channel-factory? channel-class)
+      (.channelFactory bootstrap ^ChannelFactory channel-class)
+      (.channel bootstrap channel-class))))
 
 (defn- cleanup-handler [& groups]
   (fn [_]
@@ -47,19 +47,29 @@
               (.bind ^ServerBootstrap bootstrap (int port)))]
     (.channel ^ChannelFuture (.sync fut))))
 
-(defn server [channel-class base-map handlers]
-  (assert (channel-class? channel-class) "Missing a valid Channel class, cannot be nil")
-  (let [boss-group   (event-loop-group 1)
-        worker-group (event-loop-group)
+(defn server
+  ([channel-class base-map handlers]
+  (assert (or (util/channel-class? channel-class)
+              (util/channel-factory? channel-class)) "Missing a valid Channel class or ChannelFactory object, cannot be nil")
+  (let [cores (:cores base-map (.availableProcessors (Runtime/getRuntime)))
+        boss-group   (or (:boss-group base-map)
+                         (when (= channel-class udt-channel-factory)
+                           (util/event-loop-group 1 "accept" NioUdtProvider/BYTE_PROVIDER))
+                         (util/event-loop-group 1))
+        worker-group (or (:worker-group base-map)
+                         (when (= channel-class udt-channel-factory)
+                           (util/event-loop-group (* 2 cores) "connect" NioUdtProvider/BYTE_PROVIDER))
+                         (util/event-loop-group))
         chan-init    (util/init-pipeline-handler handlers)
         backlog      (int (:backlog base-map 100))
         reuseaddr?   (:reuseaddr base-map true)
         bstrap       (configure-netty-bootstrap boss-group worker-group channel-class backlog reuseaddr? chan-init)]
     (assoc base-map
+           :cores cores
            :bootstrap bstrap
            :cleanup   (cleanup-handler boss-group worker-group)
            :stop-fn   handle-stop
-           :bind      handle-bind)))
+           :bind      handle-bind))))
 
 (def start    #(util/start :bind %))
 (def stop     util/stop)

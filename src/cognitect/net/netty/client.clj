@@ -5,28 +5,24 @@
                              ChannelOption
                              EventLoopGroup)
            (io.netty.channel.nio NioEventLoopGroup)
-           (io.netty.bootstrap Bootstrap)
+           (io.netty.bootstrap Bootstrap
+                               ChannelFactory)
            (io.netty.buffer PooledByteBufAllocator)))
 
 ;; Common Channel Classes
-(def local-channel-class (try
-                           (and (import '(io.netty.channel.local LocalChannel))
-                                io.netty.channel.local.LocalChannel)
-                         (catch Throwable t
-                           nil)))
-(def tcp-channel-class (try
-                         (and (import '(io.netty.channel.socket.nio NioSocketChannel))
-                              io.netty.channel.socket.nio.NioSocketChannel)
-                         (catch Throwable t
-                           nil)))
-(def sctp-channel-class (try
-                         (and (import '(io.netty.channel.sctp.nio NioSctpChannel))
-                              io.netty.channel.sctp.nio.NioSctpChannel)
-                         (catch Throwable t
-                           nil)))
+(def local-channel-class (util/maybe-class 'io.netty.channel.local.LocalChannel))
+(def tcp-channel-class (util/maybe-class 'io.netty.channel.socket.nio.NioSocketChannel))
+(def sctp-channel-class (util/maybe-class 'io.netty.channel.sctp.nio.NioSctpChannel))
+(def udt-channel-factory (and (util/maybe-class 'com.barchart.udt.nio.SelectorProviderUDT)
+                              (util/maybe-class 'com.barchart.udt.nio.SelectorUDT)
+                              (util/maybe-class 'io.netty.channel.udt.nio.NioUdtProvider 'BYTE_CONNECTOR)))
 
 (defn client [base-map channel-class handlers]
-  (let [client-group ^EventLoopGroup (NioEventLoopGroup.)
+  (let [cores (:cores base-map (.availableProcessors (Runtime/getRuntime)))
+        client-group ^EventLoopGroup (or (:client-group base-map)
+                                         (when (= channel-class udt-channel-factory)
+                                           (util/event-loop-group (* 2 cores) "connect" NioUdtProvider/BYTE_PROVIDER))
+                                       (NioEventLoopGroup.))
         bstrap ^Bootstrap (Bootstrap.)
         context-atom (atom nil)
         chan-init (util/init-pipeline-handler (into [{:channel-active (fn [ctx]
@@ -34,14 +30,18 @@
                                                     handlers))
         cleanup-fn (fn [m]
                      (.shutdownGracefully client-group))]
-    (assert (some? channel-class) "Missing a valid Channel Class, cannot be nil")
+    (assert (or (util/channel-class? channel-class)
+              (util/channel-factory? channel-class)) "Missing a valid Channel class or ChannelFactory object, cannot be nil")
     (doto bstrap
       (.group client-group)
-      (.channel channel-class)
       (.option ChannelOption/SO_REUSEADDR (:reuseadder base-map true))
-      (.option ChannelOption/TCP_NODELAY (:nodelay base-map true))
       (.option ChannelOption/ALLOCATOR PooledByteBufAllocator/DEFAULT)
       (.handler chan-init))
+    (when (= channel-class tcp-channel-class)
+      (.option bstrap ChannelOption/TCP_NODELAY (:nodelay base-map true)))
+    (if (util/channel-factory? channel-class)
+      (.channelFactory bstrap ^ChannelFactory channel-class)
+      (.channel bstrap channel-class))
     (merge base-map
            {:bootstrap bstrap
             :remote-context context-atom
