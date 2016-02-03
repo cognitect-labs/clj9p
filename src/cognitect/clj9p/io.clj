@@ -305,7 +305,7 @@
   ([base-map]
    {:pre [(map? base-map)]
     :post [valid-fcall?]}
-   (merge {:tag (inc (rand-int 32000)) ;; Random short generation takes ~0.05ms
+   (merge {:tag (rand-int 32000) ;; Random short generation takes ~0.05ms
            :fid proto/NOFID
            :afid proto/NOFID
            :uname (System/getProperty "user.name")

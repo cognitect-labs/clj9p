@@ -95,6 +95,7 @@
 
   (keys @(:state srv))
   (:fs @(:state srv))
+  (deref (:clients srv))
 
   (require '[cognitect.clj9p.client :as clj9p] :reload)
   (def cl (clj9p/client))
@@ -124,10 +125,11 @@
   (clj9p/write cl "/nodes/cpu" "(inc 2)")
   (clj9p/read-str cl "/nodes/cpu")
 
-  (:fs (deref (:state cl)))
+  (:mounts (deref (:state cl)))
   (clj9p/lsofids cl)
   (clj9p/lsof cl)
-  (unmount-all! cl)
+  (clj9p/unmount cl "/nodes")
+  (clj9p/unmount-all! cl)
 
   (clj9p/close cl "/nodes/interjections")
 

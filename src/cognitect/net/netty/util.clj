@@ -63,7 +63,9 @@
         (f ctx)
         (.fireChannelActive ^ChannelHandlerContext ctx)))
     (channelInactive [this ctx]
-      (.fireChannelInactive ^ChannelHandlerContext ctx))
+      (if-let [f (:channel-inactive m)]
+        (f ctx)
+        (.fireChannelInactive ^ChannelHandlerContext ctx)))
     (channelRead [this ctx obj]
       (if-let [f (:channel-read m)]
         (f ctx obj)

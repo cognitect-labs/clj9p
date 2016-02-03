@@ -39,7 +39,8 @@
 
 (declare reporting-ex-handler)
 
-(defn- remote-id    [request]        (n9p/get-remote-id (::remote request)))
+(defn- remote-id [request]
+  (n9p/get-remote-id (::remote request)))
 
 (defn- hcontext-make
   [server-state client-state input-fcall]
@@ -47,7 +48,8 @@
    :server-state server-state
    :client-state client-state})
 
-(defn- hcontext-lookup-fid   [context fid]    (-> context :client-state :fids (get fid)))
+(defn- hcontext-lookup-fid [context fid]
+  (some-> context :client-state :fids (get fid)))
 
 (def empty-client {:fids {}})
 
@@ -591,13 +593,15 @@
    (let [handlers   (server-handlers override-handlers)
          base-state (n9p/deep-merge default-initial-state initial-state)
          state-atom (atom (assoc base-state :fs (hash-fs base-state)))
-         vfs-server (->VirtualFileServer state-atom (atom {}) handlers)]
+         client-atom (atom {})
+         vfs-server (->VirtualFileServer state-atom client-atom handlers)]
      (assert (get-in base-state [:root :qid]) "Aborting: Server failed to establish a root qid")
      (reactor in-chan out-chan vfs-server)
      {:server-in in-chan
       :server-out out-chan
       :handlers-9p handlers
-      :state state-atom})))
+      :state state-atom
+      :clients client-atom})))
 
 (defn stop [serv-map]
   (when-let [server-in (:server-in serv-map)]
@@ -643,13 +647,10 @@
                                                                         ::remote-addr (.. ctx (channel) (remoteAddress))))
                                               (.. ctx (channel) (close))
                                               (.. ctx (channel) (parent) (close)))))
-                          ;; TODO: We need a way to retire the client tracking in the server-state
-                          ;:disconnect (fn [^ChannelHandlerContext ctx p]
-                          ;              (let [remote-addr (.. ctx (channel) (remoteAddress))]
-                          ;                (println "TRYING to disconnect:" remote-addr)
-                          ;                (swap! (:state server-map-9p) update-in [:client-fids] dissoc remote-addr)
-                          ;                (.disconnect ^ChannelHandlerContext ctx ^ChannelPromise p)))
-                          }])
+                          :channel-inactive (fn [^ChannelHandlerContext ctx]
+                                        (let [remote-addr (.. ctx (channel) (remoteAddress))]
+                                          (swap! (:clients server-map-9p) dissoc remote-addr)
+                                          (.fireChannelInactive ^ChannelHandlerContext ctx)))}])
           server-map-9p)))
 
 (def tcp-server #(netty-server netty/tcp-channel-class %1 %2))

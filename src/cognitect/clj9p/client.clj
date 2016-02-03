@@ -146,14 +146,26 @@
 (defn clunk [client mount-def fid]
   (blocking-call client mount-def (io/fcall {:type :tclunk :fid fid})))
 
+(defn unmount [client mount-path]
+  "Unmount a single mount point, as specified by the string-path with which is
+  was mounted.
+
+  NOTE: If you unmount a channel-based (local) server, you will be closing the
+  server's channels"
+  (let [root-fid (:root-fid @(:state client))]
+    (doseq [mount (flatten (get-in @(:state client) [:mounts mount-path]))]
+      (clunk client mount root-fid)
+      (async/close! mount))
+    (swap! (:state client) update-in [:mounts] dissoc mount-path)
+    (swap! (:state client) update-in [:fs] dissoc (subs mount-path 1))))
+
 (defn unmount-all!
   "Unmount all file systems and remove the client's inbound channel.
   This safely shutsdown a client.
   A client may not be used after this call."
   [client]
-  (doseq [mount (flatten (vals (:mounts client)))]
-    (clunk client mount (:root-fid @(:state client)))
-    (async/close! mount))
+  (doseq [[mount-path mounts] (:mounts @(:state client))]
+    (unmount client mount-path))
   (async/close! (:from-server client))
   (reset! (:state client) (:initial-state client))
   (dissoc client :from-server))
@@ -469,7 +481,8 @@
          (.writeAndFlush @(:remote-context connected-client)
                  (io/encode-fcall! output-fcall (.directBuffer PooledByteBufAllocator/DEFAULT)))
          (recur))
-       (async/close! from-server)))
+       (do (async/close! from-server)
+           (nclient/stop connected-client))))
     [to-server from-server]))
 
 (defn tcp-connect [client-options]

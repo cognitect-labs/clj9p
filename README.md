@@ -26,7 +26,7 @@ FIXME
 
 ## TODO
 
- * Server-cleanup when a client completely disconnects (via Netty lifecycle)
+ * Enhance client `mount` to allow "accruing" routes under a single point, over lifetime
 
 
 ## License
