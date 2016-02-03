@@ -108,7 +108,7 @@
   (clj9p/mode cl "/nodes/interjections")
 
   (clj9p/read-str cl "/nodes/interjections/hello")
-  (clj9p/write cl "/nodes/interjections/hello" "Hi!")
+  (clj9p/write cl "/nodes/interjections/hello" "Hi!\n")
   (clj9p/read cl "/nodes/interjections/NOTHING") ;; Should be an error - no file found
   (clj9p/touch cl "/nodes/interjections/another-greeting") ;; Error, Dir doesn't have perms set
   (clj9p/write cl "/nodes/cpu" "(inc 2)")
@@ -123,6 +123,7 @@
 
   ;; 9pserv.py has /nodes/hello and /nodes/goodbye
 
+  (clj9p/mount cl {"/nodes" [(clj9p/tcp-connect {:host "127.0.0.1" :port 9090})]})
   (clj9p/open cl "/nodes/hello")
   (clj9p/read-str cl "/nodes/hello")
   (clj9p/close cl "/nodes/hello")
