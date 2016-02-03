@@ -305,7 +305,7 @@
   ([base-map]
    {:pre [(map? base-map)]
     :post [valid-fcall?]}
-   (merge {:tag (inc (rand-int 32000)) ;; TODO: This used to be a constant, `1`, but this is more effective when debugging. Is this a good idea?
+   (merge {:tag (inc (rand-int 32000)) ;; Random short generation takes ~0.05ms
            :fid proto/NOFID
            :afid proto/NOFID
            :uname (System/getProperty "user.name")

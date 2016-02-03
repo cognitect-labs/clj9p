@@ -26,7 +26,6 @@ FIXME
 
 ## TODO
 
- * FCall tags are random shorts, but is this really worth it?
  * Server-cleanup when a client completely disconnects (via Netty lifecycle)
 
 
