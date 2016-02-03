@@ -15,6 +15,7 @@
 (def tcp-channel-class   (util/maybe-class 'io.netty.channel.socket.nio.NioServerSocketChannel))
 (def sctp-channel-class  (util/maybe-class 'io.netty.channel.sctp.nio.NioSctpServerChannel))
 (def udt-channel-factory (and (util/maybe-class 'com.barchart.udt.nio.SelectorProviderUDT)
+                              (util/maybe-class 'com.barchart.udt.nio.SelectorUDT)
                               (util/maybe-class 'io.netty.channel.udt.nio.NioUdtProvider 'BYTE_ACCEPTOR)))
 
 

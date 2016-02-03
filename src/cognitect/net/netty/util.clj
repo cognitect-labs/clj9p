@@ -144,3 +144,4 @@
   (some-> (stop netty-map)
           :cleanup
           (apply [netty-map])))
+

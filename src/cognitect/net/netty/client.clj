@@ -14,6 +14,7 @@
 (def tcp-channel-class (util/maybe-class 'io.netty.channel.socket.nio.NioSocketChannel))
 (def sctp-channel-class (util/maybe-class 'io.netty.channel.sctp.nio.NioSctpChannel))
 (def udt-channel-factory (and (util/maybe-class 'com.barchart.udt.nio.SelectorProviderUDT)
+                              (util/maybe-class 'com.barchart.udt.nio.SelectorUDT)
                               (util/maybe-class 'io.netty.channel.udt.nio.NioUdtProvider 'BYTE_CONNECTOR)))
 
 (defn client [base-map channel-class handlers]
@@ -34,9 +35,10 @@
     (doto bstrap
       (.group client-group)
       (.option ChannelOption/SO_REUSEADDR (:reuseadder base-map true))
-      (.option ChannelOption/TCP_NODELAY (:nodelay base-map true))
       (.option ChannelOption/ALLOCATOR PooledByteBufAllocator/DEFAULT)
       (.handler chan-init))
+    (when (= channel-class tcp-channel-class)
+      (.option bstrap ChannelOption/TCP_NODELAY (:nodelay base-map true)))
     (if (util/channel-factory? channel-class)
       (.channelFactory bstrap ^ChannelFactory channel-class)
       (.channel bstrap channel-class))

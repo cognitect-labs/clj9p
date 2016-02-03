@@ -44,6 +44,16 @@
                                   :join? false}
                                  serv))
 
+;; This 9P implementation supports local chans, JVM IPC, TCP, UDT, and SCTP transports
+;; If you want to use UDT, comment out the `def` below, and update the transport-specific calls in the example code
+;(def udt-serv (server/udt-server {:flush-every 0
+;                                  :backlog 100
+;                                  :reuseaddr true
+;                                  :port 9091
+;                                  :host "127.0.0.1"
+;                                  :join? false}
+;                                 serv))
+
 (defn start! []
   (require '[cognitect.net.netty.server :as netty])
   (cognitect.net.netty.server/start tcp-serv))
@@ -52,7 +62,7 @@
   ;; Server 1 -- Remote
   (def srv (start!))
   (netty/stop srv)
-  ;; Server 2 -- Local-only
+  ;; Server 2 -- Local-only via channels
   (def srv2 (server/server {:app {:scratchpad {}}
                             :ops {:stat server/stat-faker
                                   :walk server/path-walker
