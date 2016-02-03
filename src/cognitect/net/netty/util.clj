@@ -6,14 +6,33 @@
                              ChannelOutboundHandler
                              ChannelHandlerContext
                              ChannelPromise
-                             ChannelFuture)))
+                             ChannelFuture)
+           (io.netty.bootstrap ChannelFactory)
+           (io.netty.channel.nio NioEventLoopGroup)
+           (io.netty.util.concurrent DefaultThreadFactory)))
 
 (defn maybe-class
-  [classname]
-  (try
-    (eval `(import ~classname))
-    (catch Throwable t
-      nil)))
+  ([classname]
+   (try
+     (eval `(import ~classname))
+     (catch Throwable t
+       nil)))
+  ([classname static-field]
+   (when-let [c (maybe-class classname)]
+     (eval `(. ~c ~static-field)))))
+
+(defn event-loop-group
+  ([]         (NioEventLoopGroup.))
+  ([nthreads] (NioEventLoopGroup. nthreads))
+  ([nthreads group-name provider]
+   (let [thread-factory (DefaultThreadFactory. group-name)]
+     (NioEventLoopGroup. nthreads thread-factory provider))))
+
+(defn channel-class? [cls]
+  (and (class? cls) (some #{Channel} (supers cls))))
+
+(defn channel-factory? [factory]
+  (instance? ChannelFactory factory))
 
 ;; This is basically like `ChannelHandlerAdapter`, but let's us control it (and use reify instead of proxy)
 ;; Also recognizes channel initializers
