@@ -26,11 +26,9 @@ FIXME
 
 ## TODO
 
- * Open handling
- * Refactor server state handling? (open for extension without 9P client)
- * Improved mounting/closing
- * Improved server reactor loop
- * Dirreader-interop needs corrected offset handling
+ * FCall tags are random shorts, but is this really worth it?
+ * Server-cleanup when a client completely disconnects (via Netty lifecycle)
+
 
 ## License
 
