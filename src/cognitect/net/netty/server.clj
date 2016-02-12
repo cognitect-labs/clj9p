@@ -60,6 +60,8 @@
                          (when (= channel-class udt-channel-factory)
                            (util/event-loop-group (* 2 cores) "connect" NioUdtProvider/BYTE_PROVIDER))
                          (util/event-loop-group))
+        ssl-context (:ssl-context base-map)
+        ;; TODO: If ssl-context we need to prepend an SSLHandler to `handlers`.  Use SslContextBuilder to build ssl-context
         chan-init    (util/init-pipeline-handler handlers)
         backlog      (int (:backlog base-map 100))
         reuseaddr?   (:reuseaddr base-map true)

@@ -27,6 +27,7 @@ FIXME
 ## TODO
 
  * Enhance client `mount` to allow "accruing" routes under a single point, over lifetime
+ * Add DTLS/SSL support via server/client options, passing in an SslContext (created with SslContextBuilder) or some aux fn.
 
 
 ## License

@@ -554,7 +554,6 @@
                            (qid-children-qids (get-in ctx [:server-state :fs]) qid))]
     (let [buffer (io/little-endian (io/default-buffer))
           stat-buffer (io/write-stats buffer (mapv #(fake-stat ctx %) child-qids) false)
-          ;; TODO: offset slice isn't enough, it also needs to factor in the length of the read i-fcall
           ret-buffer (io/slice stat-buffer (get-in ctx [:input-fcall :offset]))]
       (make-resp ctx {:type :rread
                       :data ret-buffer}))
