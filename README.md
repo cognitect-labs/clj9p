@@ -27,7 +27,9 @@ FIXME
 ## TODO
 
  * Enhance client `mount` to allow "accruing" routes under a single point, over lifetime
+ * Add PKI auth, in the same style as py9p
  * Add DTLS/SSL support via server/client options, passing in an SslContext (created with SslContextBuilder) or some aux fn.
+  * Try StartSSL as the default option
 
 
 ## License

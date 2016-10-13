@@ -108,7 +108,7 @@
 
   (clj9p/stat cl "/nodes")
   (clj9p/stat cl "/nodes/interjections")
-  (clj9p/walk cl "/base/interjections/hello")
+  (clj9p/walk cl "/nodes/interjections/hello")
 
   (map :name (clj9p/ls cl "/nodes"))
   (map :name (clj9p/ls cl "/nodes/interjections"))
